@@ -48,7 +48,7 @@ function Invoke-WslCommand([string]$Command) {
 
 function Test-Wsl2 {
     try {
-        $lines = @(& wsl.exe --list --verbose 2>&1) -replace "`0", ''
+        $lines = @(& wsl.exe --list -- verbose 2>&1) -replace "`0", ''
         if ($lines -match '\s2\s*$') { return 'Installed (WSL 2)' }
         $status = (@(& wsl.exe --status 2>&1) -join "`n") -replace "`0", ''
         if ($status -match '(?im)Default Version\s*:\s*2') { return 'Installed (WSL 2 default)' }
@@ -108,9 +108,9 @@ function New-SelectedDistroProfile {
 function Get-ProfileDisplayText([object]$Profile) {
     if (-not $Profile) { return '' }
     switch ([string]$Profile.Status) {
-        'Ready' { return "$($Profile.Name) — Installed" }
-        'Installation failed' { return "$($Profile.Name) — Failed" }
-        default { return "$($Profile.Name) — Not installed" }
+        'Ready' { return "$($Profile.Name) - Installed" }
+        'Installation failed' { return "$($Profile.Name) - Failed" }
+        default { return "$($Profile.Name) - Not installed" }
     }
 }
 
@@ -176,12 +176,11 @@ $profileCombo=New-Object System.Windows.Forms.ComboBox;$profileCombo.Dock='Fill'
 foreach($c in $script:Components[1..4]){Add-ComponentRow $c}
 
 $terminalRow=$table.RowCount;$table.RowCount++;$table.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute,34)))
-$terminalHost=New-Object System.Windows.Forms.Panel;$terminalHost.Dock='Fill';$table.Controls.Add($terminalHost,0,$terminalRow);[void]$table.SetColumnSpan($terminalHost,3)
-$terminalPanel=New-Object System.Windows.Forms.Panel;$terminalPanel.Dock='Top';$terminalPanel.Height=86;$terminalPanel.Visible=$false;$terminalHost.Controls.Add($terminalPanel)
-$terminalButton=New-Object System.Windows.Forms.Button;$terminalButton.Text='▶  Terminal Preference for DistroShelf';$terminalButton.TextAlign='MiddleLeft';$terminalButton.Dock='Top';$terminalButton.Height=34;$terminalHost.Controls.Add($terminalButton)
-$terminalLabel=New-Object System.Windows.Forms.Label;$terminalLabel.Text='Choose the terminal DistroShelf should use:';$terminalLabel.Location=New-Object System.Drawing.Point(12,10);$terminalLabel.AutoSize=$true;$terminalPanel.Controls.Add($terminalLabel)
-$terminalCombo=New-Object System.Windows.Forms.ComboBox;$terminalCombo.Location=New-Object System.Drawing.Point(12,36);$terminalCombo.Size=New-Object System.Drawing.Size(360,30);$terminalCombo.DropDownStyle='DropDownList';foreach($t in $script:SupportedDistroShelfTerminals){[void]$terminalCombo.Items.Add($t)};$terminalCombo.SelectedItem='GNOME Console';$terminalPanel.Controls.Add($terminalCombo)
-$terminalButton.Add_Click({$terminalPanel.Visible=-not $terminalPanel.Visible;if($terminalPanel.Visible){$terminalButton.Text='▼  Terminal Preference for DistroShelf';$table.RowStyles[$terminalRow].Height=120}else{$terminalButton.Text='▶  Terminal Preference for DistroShelf';$table.RowStyles[$terminalRow].Height=34};$table.PerformLayout();$table.Refresh()})
+$terminalLabel=New-Object System.Windows.Forms.Label;$terminalLabel.Text='Terminal Preference for DistroShelf';$terminalLabel.Dock='Fill';$terminalLabel.Padding=New-Object System.Windows.Forms.Padding(8,0,0,0);$terminalLabel.TextAlign='MiddleLeft';[void]$table.Controls.Add($terminalLabel,0,$terminalRow)
+$terminalCategory=New-Object System.Windows.Forms.Label;$terminalCategory.Text='GUI';$terminalCategory.Dock='Fill';$terminalCategory.TextAlign='MiddleLeft';[void]$table.Controls.Add($terminalCategory,1,$terminalRow)
+$terminalCombo=New-Object System.Windows.Forms.ComboBox;$terminalCombo.Dock='Fill';$terminalCombo.DropDownStyle='DropDownList';$terminalCombo.Margin=New-Object System.Windows.Forms.Padding(0,4,8,4)
+foreach($t in $script:SupportedDistroShelfTerminals){[void]$terminalCombo.Items.Add($t)}
+$terminalCombo.SelectedItem='GNOME Console';[void]$table.Controls.Add($terminalCombo,2,$terminalRow)
 
 Add-ComponentRow $script:Components[5];Add-ComponentRow $script:Components[6]
 
@@ -239,7 +238,7 @@ function Refresh-Scan {
     $distroStatus=Test-SelectedDistroProfile
     $distroCheck.Checked=$distroStatus -like 'Not installed*'
     $current=Get-SelectedProfile
-    if($current){$info.Text="Profile: $($current.Name) — $($current.Status)"}
+    if($current){$info.Text="Profile: $($current.Name) - $($current.Status)"}
 }
 
 $refresh.Add_Click({Refresh-ProfileCombo;Refresh-Scan})
