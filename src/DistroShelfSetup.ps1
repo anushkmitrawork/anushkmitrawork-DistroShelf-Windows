@@ -42,10 +42,30 @@ function Find-UbuntuDistro {
 }
 
 function Test-Wsl2 {
+    # Detect WSL itself first. A WSL 2 distro is definitive evidence that WSL 2
+    # is installed, regardless of the configured default WSL version.
     try {
-        $status = (& wsl.exe --status 2>&1 | Out-String)
-        $distros = (& wsl.exe --list --verbose 2>&1 | Out-String)
-        if ($status -match 'Default Version:\s*2' -or $distros -match '\s2\s*$') { return 'Installed' }
+        $wslCommand = Get-Command 'wsl.exe' -ErrorAction Stop
+
+        $distros = @(& $wslCommand.Source --list --verbose 2>&1)
+        $distroText = ($distros -join "`n") -replace "`0", ''
+
+        # Typical output contains a VERSION column with a 2 for WSL 2 distros.
+        foreach ($line in $distros) {
+            $clean = ($line -replace "`0", '').Trim()
+            if ($clean -match '\s2\s*$') { return 'Installed (WSL 2)' }
+        }
+
+        # If there are no distros yet, the WSL default version can still tell us
+        # that WSL 2 is configured as the default.
+        $status = @(& $wslCommand.Source --status 2>&1) -join "`n"
+        $status = $status -replace "`0", ''
+        if ($status -match '(?im)Default Version\s*:\s*2') {
+            return 'Installed (WSL 2 default)'
+        }
+
+        # WSL exists, but no evidence of WSL 2 was found.
+        if ($distroText -or $status) { return 'Installed (WSL 2 not detected)' }
     } catch {}
     return 'Not installed'
 }
