@@ -1,0 +1,16 @@
+# Visual Studio / .NET
+.vs/
+bin/
+obj/
+*.user
+*.suo
+
+# Build output
+artifacts/
+
+# Rider
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
