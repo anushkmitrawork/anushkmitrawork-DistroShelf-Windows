@@ -6,6 +6,9 @@ Add-Type -AssemblyName System.Drawing
 
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
+# These are the WSL distributions offered by the beginner-friendly installer.
+$script:SupportedWslDistros = @('Ubuntu', 'Debian', 'Fedora', 'Arch Linux', 'openSUSE')
+
 # Keep this list aligned with DistroShelf's currently supported terminal choices.
 # Windows Terminal and arbitrary custom terminals are intentionally excluded.
 $script:SupportedDistroShelfTerminals = @(
@@ -22,9 +25,11 @@ $script:SupportedDistroShelfTerminals = @(
     'QTerminal'
 )
 
+$script:SelectedDistro = 'Ubuntu'
+$script:SelectedDistroWslName = $null
+
 $script:Components = @(
     @{ Key='wsl2'; Name='WSL 2'; Group='Core'; Detect={ Test-Wsl2 } }
-    @{ Key='ubuntu'; Name='Ubuntu'; Group='Core'; Detect={ Test-Ubuntu } }
     @{ Key='podman'; Name='Podman'; Group='Core'; Detect={ Test-LinuxCommand 'podman' } }
     @{ Key='distrobox'; Name='Distrobox'; Group='Core'; Detect={ Test-LinuxCommand 'distrobox' } }
     @{ Key='flatpak'; Name='Flatpak'; Group='GUI'; Detect={ Test-LinuxCommand 'flatpak' } }
@@ -33,25 +38,44 @@ $script:Components = @(
     @{ Key='git'; Name='Git for Windows'; Group='Developer'; Detect={ Test-WindowsCommand 'git.exe' } }
 )
 
-$script:UbuntuDistro = $null
-
-function Invoke-WslCommand {
-    param([string]$Command, [string]$Distro = $script:UbuntuDistro)
-    if ([string]::IsNullOrWhiteSpace($Distro)) { return $null }
+function Get-WslDistros {
     try {
-        $output = & wsl.exe --distribution $Distro -- bash -lc $Command 2>$null
-        if ($LASTEXITCODE -eq 0) { return ($output -join "`n").Trim() }
-    } catch {}
+        $lines = & wsl.exe --list --quiet 2>$null
+        return @($lines | ForEach-Object { ($_ -replace "`0", '').Trim() } | Where-Object { $_ })
+    } catch { return @() }
+}
+
+function Find-SupportedWslDistro {
+    param([string]$DisplayName)
+    $distros = Get-WslDistros
+    foreach ($name in $distros) {
+        switch ($DisplayName) {
+            'Ubuntu' {
+                if ($name -match '^Ubuntu($|[- ])') { return $name }
+            }
+            'Debian' {
+                if ($name -match '^Debian($|[- ])') { return $name }
+            }
+            'Fedora' {
+                if ($name -match '^Fedora($|[- ])') { return $name }
+            }
+            'Arch Linux' {
+                if ($name -match '^(Arch|ArchLinux)($|[- ])') { return $name }
+            }
+            'openSUSE' {
+                if ($name -match '^openSUSE($|[- ])') { return $name }
+            }
+        }
+    }
     return $null
 }
 
-function Find-UbuntuDistro {
+function Invoke-WslCommand {
+    param([string]$Command)
+    if ([string]::IsNullOrWhiteSpace($script:SelectedDistroWslName)) { return $null }
     try {
-        $lines = & wsl.exe --list --quiet 2>$null
-        foreach ($line in $lines) {
-            $name = ($line -replace "`0", '').Trim()
-            if ($name -match '^Ubuntu($|[- ])') { return $name }
-        }
+        $output = & wsl.exe --distribution $script:SelectedDistroWslName -- bash -lc $Command 2>$null
+        if ($LASTEXITCODE -eq 0) { return ($output -join "`n").Trim() }
     } catch {}
     return $null
 }
@@ -73,18 +97,20 @@ function Test-Wsl2 {
     return 'Not installed'
 }
 
-function Test-Ubuntu {
-    $script:UbuntuDistro = Find-UbuntuDistro
-    if (-not $script:UbuntuDistro) { return 'Not installed' }
-    $release = Invoke-WslCommand "grep '^PRETTY_NAME=' /etc/os-release"
-    if ($release) { return "Installed ($script:UbuntuDistro)" }
-    return 'Needs attention'
+function Test-SelectedDistro {
+    $script:SelectedDistroWslName = Find-SupportedWslDistro $script:SelectedDistro
+    if ($script:SelectedDistroWslName) {
+        return "Installed ($script:SelectedDistroWslName)"
+    }
+    return "Not installed ($script:SelectedDistro)"
 }
 
 function Test-LinuxCommand {
     param([string]$Command)
-    if (-not $script:UbuntuDistro) { $script:UbuntuDistro = Find-UbuntuDistro }
-    if (-not $script:UbuntuDistro) { return 'Needs Ubuntu' }
+    if (-not $script:SelectedDistroWslName) {
+        $script:SelectedDistroWslName = Find-SupportedWslDistro $script:SelectedDistro
+    }
+    if (-not $script:SelectedDistroWslName) { return "Needs $($script:SelectedDistro)" }
     $version = Invoke-WslCommand "command -v '$Command'"
     if ($version) {
         $detail = Invoke-WslCommand "'$Command' --version 2>/dev/null | head -n 1"
@@ -95,17 +121,21 @@ function Test-LinuxCommand {
 }
 
 function Test-Flathub {
-    if (-not $script:UbuntuDistro) { $script:UbuntuDistro = Find-UbuntuDistro }
-    if (-not $script:UbuntuDistro) { return 'Needs Ubuntu' }
+    if (-not $script:SelectedDistroWslName) {
+        $script:SelectedDistroWslName = Find-SupportedWslDistro $script:SelectedDistro
+    }
+    if (-not $script:SelectedDistroWslName) { return "Needs $($script:SelectedDistro)" }
     $remote = Invoke-WslCommand "flatpak remotes --columns=name 2>/dev/null | grep -Fx flathub"
     if ($remote) { return 'Configured' }
     return 'Not configured'
 }
 
 function Test-DistroShelf {
-    if (-not $script:UbuntuDistro) { $script:UbuntuDistro = Find-UbuntuDistro }
-    if (-not $script:UbuntuDistro) { return 'Needs Ubuntu' }
-    $status = & wsl.exe --distribution $script:UbuntuDistro -- bash -lc "flatpak info com.ranfdev.DistroShelf >/dev/null 2>&1; echo `$?" 2>$null
+    if (-not $script:SelectedDistroWslName) {
+        $script:SelectedDistroWslName = Find-SupportedWslDistro $script:SelectedDistro
+    }
+    if (-not $script:SelectedDistroWslName) { return "Needs $($script:SelectedDistro)" }
+    $status = & wsl.exe --distribution $script:SelectedDistroWslName -- bash -lc "flatpak info com.ranfdev.DistroShelf >/dev/null 2>&1; echo `$?" 2>$null
     if (($status -join '').Trim() -eq '0') { return 'Installed' }
     return 'Not installed'
 }
@@ -139,8 +169,6 @@ $subtitle.Location = New-Object System.Drawing.Point(28, 58)
 $subtitle.AutoSize = $true
 $form.Controls.Add($subtitle)
 
-# The table keeps Terminal Preference as a real row directly between
-# Flathub and DistroShelf.
 $table = New-Object System.Windows.Forms.TableLayoutPanel
 $table.Location = New-Object System.Drawing.Point(24, 92)
 $table.Size = New-Object System.Drawing.Size(696, 430)
@@ -197,9 +225,49 @@ function Add-ComponentRow {
     [void]$table.Controls.Add($status, 2, $row)
 }
 
-foreach ($component in $script:Components[0..5]) { Add-ComponentRow $component }
+# WSL 2 row.
+Add-ComponentRow $script:Components[0]
 
-# Terminal preference row: this is intentionally inserted after Flathub.
+# Distro options row: replaces the old Ubuntu row and provides the five
+# supported beginner-friendly WSL distro choices.
+$distroRow = $table.RowCount
+$table.RowCount++
+$table.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 34)))
+
+$distroCheck = New-Object System.Windows.Forms.CheckBox
+$distroCheck.Text = 'Distro options'
+$distroCheck.Dock = 'Fill'
+$distroCheck.Padding = New-Object System.Windows.Forms.Padding(8, 0, 0, 0)
+$distroCheck.Font = New-Object System.Drawing.Font('Segoe UI', 9)
+[void]$table.Controls.Add($distroCheck, 0, $distroRow)
+
+$distroCategory = New-Object System.Windows.Forms.Label
+$distroCategory.Text = 'Core'
+$distroCategory.Dock = 'Fill'
+$distroCategory.TextAlign = 'MiddleLeft'
+[void]$table.Controls.Add($distroCategory, 1, $distroRow)
+
+$distroCombo = New-Object System.Windows.Forms.ComboBox
+$distroCombo.Dock = 'Fill'
+$distroCombo.Margin = New-Object System.Windows.Forms.Padding(0, 4, 8, 4)
+$distroCombo.DropDownStyle = 'DropDownList'
+foreach ($distro in $script:SupportedWslDistros) { [void]$distroCombo.Items.Add($distro) }
+$distroCombo.SelectedItem = $script:SelectedDistro
+[void]$table.Controls.Add($distroCombo, 2, $distroRow)
+
+$distroCombo.Add_SelectedIndexChanged({
+    $script:SelectedDistro = [string]$distroCombo.SelectedItem
+    $script:SelectedDistroWslName = Find-SupportedWslDistro $script:SelectedDistro
+    $distroStatus = Test-SelectedDistro
+    $distroCheck.Checked = $distroStatus -like 'Not installed*'
+})
+
+$distroCheck.Checked = (Test-SelectedDistro) -like 'Not installed*'
+
+# Remaining core/GUI rows.
+foreach ($component in $script:Components[1..4]) { Add-ComponentRow $component }
+
+# Terminal preference row stays directly after Flathub and before DistroShelf.
 $terminalRow = $table.RowCount
 $table.RowCount++
 $table.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 34)))
@@ -210,8 +278,6 @@ $terminalHost.Margin = New-Object System.Windows.Forms.Padding(0)
 $table.Controls.Add($terminalHost, 0, $terminalRow)
 [void]$table.SetColumnSpan($terminalHost, 3)
 
-# Add the expandable panel first, then the button. This gives the button
-# the correct top docking order and avoids the dropdown being clipped.
 $terminalPanel = New-Object System.Windows.Forms.Panel
 $terminalPanel.Dock = 'Top'
 $terminalPanel.Height = 86
@@ -236,9 +302,7 @@ $terminalCombo = New-Object System.Windows.Forms.ComboBox
 $terminalCombo.Location = New-Object System.Drawing.Point(12, 36)
 $terminalCombo.Size = New-Object System.Drawing.Size(360, 30)
 $terminalCombo.DropDownStyle = 'DropDownList'
-foreach ($terminal in $script:SupportedDistroShelfTerminals) {
-    [void]$terminalCombo.Items.Add($terminal)
-}
+foreach ($terminal in $script:SupportedDistroShelfTerminals) { [void]$terminalCombo.Items.Add($terminal) }
 $terminalCombo.SelectedItem = 'GNOME Console'
 $terminalPanel.Controls.Add($terminalCombo)
 
@@ -246,20 +310,18 @@ $terminalButton.Add_Click({
     if ($terminalPanel.Visible) {
         $terminalPanel.Visible = $false
         $terminalButton.Text = '▶  Terminal Preference for DistroShelf'
-        $table.RowStyles[$terminalRow].SizeType = [System.Windows.Forms.SizeType]::Absolute
         $table.RowStyles[$terminalRow].Height = 34
     } else {
         $terminalPanel.Visible = $true
         $terminalButton.Text = '▼  Terminal Preference for DistroShelf'
-        $table.RowStyles[$terminalRow].SizeType = [System.Windows.Forms.SizeType]::Absolute
         $table.RowStyles[$terminalRow].Height = 120
     }
     $table.PerformLayout()
     $table.Refresh()
 })
 
+Add-ComponentRow $script:Components[5]
 Add-ComponentRow $script:Components[6]
-Add-ComponentRow $script:Components[7]
 
 $refresh = New-Object System.Windows.Forms.Button
 $refresh.Text = 'Scan again'
@@ -274,12 +336,14 @@ $install.Size = New-Object System.Drawing.Size(140, 38)
 $form.Controls.Add($install)
 
 $info = New-Object System.Windows.Forms.Label
-$info.Text = 'Only terminals currently supported by DistroShelf are offered. Installation actions remain disabled while detection is being validated.'
+$info.Text = 'Select a WSL distro above. Installation actions remain disabled while detection is being validated.'
 $info.Location = New-Object System.Drawing.Point(24, 620)
 $info.Size = New-Object System.Drawing.Size(696, 35)
 $form.Controls.Add($info)
 
 function Refresh-Scan {
+    $script:SelectedDistroWslName = Find-SupportedWslDistro $script:SelectedDistro
+
     foreach ($control in $table.Controls) {
         if ($control -is [System.Windows.Forms.CheckBox] -and $control.Tag) {
             $component = $control.Tag
@@ -295,6 +359,9 @@ function Refresh-Scan {
             $control.Checked = ($status -notlike 'Installed*' -and $status -ne 'Configured')
         }
     }
+
+    $distroStatus = Test-SelectedDistro
+    $distroCheck.Checked = $distroStatus -like 'Not installed*'
 }
 
 $refresh.Add_Click({ Refresh-Scan })
