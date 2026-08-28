@@ -48,7 +48,7 @@ function Invoke-WslCommand([string]$Command) {
 
 function Test-Wsl2 {
     try {
-        $lines = @(& wsl.exe --list -- verbose 2>&1) -replace "`0", ''
+        $lines = @(& wsl.exe --list --verbose 2>&1) -replace "`0", ''
         if ($lines -match '\s2\s*$') { return 'Installed (WSL 2)' }
         $status = (@(& wsl.exe --status 2>&1) -join "`n") -replace "`0", ''
         if ($status -match '(?im)Default Version\s*:\s*2') { return 'Installed (WSL 2 default)' }
