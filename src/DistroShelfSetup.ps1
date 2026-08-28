@@ -6,6 +6,22 @@ Add-Type -AssemblyName System.Drawing
 
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
+# Keep this list aligned with DistroShelf's supported-terminal choices.
+# Windows Terminal and arbitrary custom terminals are intentionally excluded.
+$script:SupportedDistroShelfTerminals = @(
+    'Alacritty',
+    'COSMIC Terminal',
+    'Deepin Terminal',
+    'Foot',
+    'GNOME Console',
+    'GNOME Terminal',
+    'Ghostty',
+    'Kitty',
+    'Konsole',
+    'Ptyxis',
+    'QTerminal'
+)
+
 $script:Components = @(
     @{ Key='wsl2'; Name='WSL 2'; Group='Core'; Detect={ Test-Wsl2 } }
     @{ Key='ubuntu'; Name='Ubuntu'; Group='Core'; Detect={ Test-Ubuntu } }
@@ -102,12 +118,8 @@ function Test-Flathub {
 function Test-DistroShelf {
     if (-not $script:UbuntuDistro) { $script:UbuntuDistro = Find-UbuntuDistro }
     if (-not $script:UbuntuDistro) { return 'Needs Ubuntu' }
-    $app = Invoke-WslCommand "flatpak info com.ranfdev.DistroShelf >/dev/null 2>&1"
-    if ($app -eq '') {
-        # flatpak info returns no stdout on success, so run a separate status check.
-        $status = & wsl.exe --distribution $script:UbuntuDistro -- bash -lc "flatpak info com.ranfdev.DistroShelf >/dev/null 2>&1; echo `$?" 2>$null
-        if (($status -join '').Trim() -eq '0') { return 'Installed' }
-    }
+    $status = & wsl.exe --distribution $script:UbuntuDistro -- bash -lc "flatpak info com.ranfdev.DistroShelf >/dev/null 2>&1; echo `$?" 2>$null
+    if (($status -join '').Trim() -eq '0') { return 'Installed' }
     return 'Not installed'
 }
 
@@ -121,18 +133,11 @@ function Test-WindowsCommand {
     } catch { return 'Not installed' }
 }
 
-function Get-StateKind {
-    param([string]$State)
-    if ($State -like 'Installed*' -or $State -eq 'Configured') { return 'Installed' }
-    if ($State -like 'Needs*' -or $State -eq 'Not configured') { return 'Attention' }
-    return 'Missing'
-}
-
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'DistroShelf for Windows'
 $form.StartPosition = 'CenterScreen'
-$form.Size = New-Object System.Drawing.Size(760, 620)
-$form.MinimumSize = New-Object System.Drawing.Size(700, 560)
+$form.Size = New-Object System.Drawing.Size(760, 680)
+$form.MinimumSize = New-Object System.Drawing.Size(700, 620)
 
 $title = New-Object System.Windows.Forms.Label
 $title.Text = 'DistroShelf for Windows'
@@ -149,7 +154,7 @@ $form.Controls.Add($subtitle)
 
 $list = New-Object System.Windows.Forms.ListView
 $list.Location = New-Object System.Drawing.Point(24, 92)
-$list.Size = New-Object System.Drawing.Size(696, 390)
+$list.Size = New-Object System.Drawing.Size(696, 330)
 $list.View = 'Details'
 $list.FullRowSelect = $true
 $list.CheckBoxes = $true
@@ -159,21 +164,43 @@ $list.GridLines = $false
 [void]$list.Columns.Add('Status', 340)
 $form.Controls.Add($list)
 
+$terminalLabel = New-Object System.Windows.Forms.Label
+$terminalLabel.Text = 'Preferred DistroShelf terminal:'
+$terminalLabel.Location = New-Object System.Drawing.Point(24, 445)
+$terminalLabel.AutoSize = $true
+$form.Controls.Add($terminalLabel)
+
+$terminalCombo = New-Object System.Windows.Forms.ComboBox
+$terminalCombo.Location = New-Object System.Drawing.Point(24, 470)
+$terminalCombo.Size = New-Object System.Drawing.Size(360, 30)
+$terminalCombo.DropDownStyle = 'DropDownList'
+foreach ($terminal in $script:SupportedDistroShelfTerminals) {
+    [void]$terminalCombo.Items.Add($terminal)
+}
+$terminalCombo.SelectedItem = 'GNOME Console'
+$form.Controls.Add($terminalCombo)
+
+$terminalInfo = New-Object System.Windows.Forms.Label
+$terminalInfo.Text = 'Only terminals currently supported by DistroShelf are offered. Windows Terminal and custom terminals are intentionally excluded.'
+$terminalInfo.Location = New-Object System.Drawing.Point(400, 473)
+$terminalInfo.Size = New-Object System.Drawing.Size(320, 45)
+$form.Controls.Add($terminalInfo)
+
 $refresh = New-Object System.Windows.Forms.Button
 $refresh.Text = 'Scan again'
-$refresh.Location = New-Object System.Drawing.Point(24, 505)
+$refresh.Location = New-Object System.Drawing.Point(24, 535)
 $refresh.Size = New-Object System.Drawing.Size(120, 38)
 $form.Controls.Add($refresh)
 
 $install = New-Object System.Windows.Forms.Button
 $install.Text = 'Install selected'
-$install.Location = New-Object System.Drawing.Point(155, 505)
+$install.Location = New-Object System.Drawing.Point(155, 535)
 $install.Size = New-Object System.Drawing.Size(140, 38)
 $form.Controls.Add($install)
 
 $info = New-Object System.Windows.Forms.Label
 $info.Text = 'Detection prototype: installation actions will be enabled after the detection layer is validated.'
-$info.Location = New-Object System.Drawing.Point(24, 552)
+$info.Location = New-Object System.Drawing.Point(24, 590)
 $info.AutoSize = $true
 $form.Controls.Add($info)
 
