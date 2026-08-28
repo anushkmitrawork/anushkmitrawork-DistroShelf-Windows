@@ -66,7 +66,7 @@ function Test-DistroShelf {
     return 'Not installed'
 }
 function Test-WindowsCommand([string]$Command) {
-    try { $cmd = Get-Command $Command -ErrorAction Stop; return 'Installed' } catch { return 'Not installed' }
+    try { Get-Command $Command -ErrorAction Stop | Out-Null; return 'Installed' } catch { return 'Not installed' }
 }
 
 $form = New-Object System.Windows.Forms.Form
@@ -130,12 +130,12 @@ $install.Add_Click({
  $progressForm=New-Object System.Windows.Forms.Form;$progressForm.Text='Installing DistroShelf';$progressForm.StartPosition='CenterParent';$progressForm.Size=New-Object System.Drawing.Size(520,190);$progressForm.ControlBox=$false
  $progressLabel=New-Object System.Windows.Forms.Label;$progressLabel.Text='Preparing...';$progressLabel.Location=New-Object System.Drawing.Point(20,20);$progressLabel.Size=New-Object System.Drawing.Size(460,45);$progressForm.Controls.Add($progressLabel)
  $bar=New-Object System.Windows.Forms.ProgressBar;$bar.Location=New-Object System.Drawing.Point(20,75);$bar.Size=New-Object System.Drawing.Size(460,25);$bar.Minimum=0;$bar.Maximum=100;$progressForm.Controls.Add($bar)
- $cancel=New-Object System.Windows.Forms.Button;$cancel.Text='Close after completion';$cancel.Enabled=$false;$cancel.Location=New-Object System.Drawing.Point(330,115);$cancel.Size=New-Object System.Drawing.Size(150,30);$progressForm.Controls.Add($cancel)
+ $closeButton=New-Object System.Windows.Forms.Button;$closeButton.Text='Close';$closeButton.Enabled=$false;$closeButton.Location=New-Object System.Drawing.Point(380,115);$closeButton.Size=New-Object System.Drawing.Size(100,30);$progressForm.Controls.Add($closeButton)
  $progressForm.Show($form);$form.Enabled=$false
  try {
-   $result=Invoke-DistroShelfInstall -Distro ([string]$distroCombo.SelectedItem) -Terminal ([string]$terminalCombo.SelectedItem) -OnProgress {param($p,$m)$bar.Value=[Math]::Min(100,[Math]::Max(0,$p));$progressLabel.Text=$m;$progressForm.Refresh()} 
+   $result=Invoke-DistroShelfInstall -Distro ([string]$distroCombo.SelectedItem) -Terminal ([string]$terminalCombo.SelectedItem) -OnProgress {param($p,$m)$bar.Value=[Math]::Min(100,[Math]::Max(0,$p));$progressLabel.Text=$m;$progressForm.Refresh()}
    if($result.Success){$progressLabel.Text='Installation complete!';$bar.Value=100;$info.Text="Ready: $($result.ProfileName)";[System.Windows.Forms.MessageBox]::Show("DistroShelf is ready in $($result.ProfileName).","Installation complete",'OK','Information')|Out-Null}else{[System.Windows.Forms.MessageBox]::Show($result.Error,'Installation failed','OK','Error')|Out-Null}
- } catch { [System.Windows.Forms.MessageBox]::Show($_.Exception.Message,'Installation failed','OK','Error')|Out-Null } finally {$form.Enabled=$true;$cancel.Enabled=$true;$progressForm.ControlBox=$true;$progressForm.Refresh();Refresh-Scan}
+ } catch { [System.Windows.Forms.MessageBox]::Show($_.Exception.Message,'Installation failed','OK','Error')|Out-Null } finally {$form.Enabled=$true;$closeButton.Enabled=$true;$progressForm.ControlBox=$true;$progressForm.Refresh();Refresh-Scan}
 })
 
 Refresh-Scan
