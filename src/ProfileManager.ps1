@@ -7,9 +7,6 @@
 #   DistroShelf-Ubuntu1
 #   DistroShelf-Ubuntu2
 #   DistroShelf-Fedora1
-#
-# This module intentionally does NOT install WSL distributions yet. It provides
-# the naming, metadata and persistence layer that the installer will use.
 
 $script:DistroShelfProfileRoot = Join-Path $env:LOCALAPPDATA 'DistroShelf'
 $script:DistroShelfProfileFile = Join-Path $script:DistroShelfProfileRoot 'profiles.json'
@@ -116,6 +113,60 @@ function New-DistroShelfProfile {
     $profiles += [pscustomobject]$profile
     Save-DistroShelfProfiles $profiles
     return [pscustomobject]$profile
+}
+
+function Get-DistroShelfProfileById {
+    param([Parameter(Mandatory)][string]$Id)
+
+    foreach ($profile in Get-DistroShelfProfiles) {
+        if ([string]$profile.Id -eq $Id) { return $profile }
+    }
+
+    return $null
+}
+
+function Set-DistroShelfProfileStatus {
+    param(
+        [Parameter(Mandatory)][string]$Id,
+        [Parameter(Mandatory)][string]$Status
+    )
+
+    $profiles = @(Get-DistroShelfProfiles)
+    $found = $false
+
+    foreach ($profile in $profiles) {
+        if ([string]$profile.Id -eq $Id) {
+            $profile.Status = $Status
+            $found = $true
+            break
+        }
+    }
+
+    if (-not $found) { throw "Profile not found: $Id" }
+    Save-DistroShelfProfiles $profiles
+    return Get-DistroShelfProfileById -Id $Id
+}
+
+function Set-DistroShelfProfileTerminal {
+    param(
+        [Parameter(Mandatory)][string]$Id,
+        [Parameter(Mandatory)][string]$Terminal
+    )
+
+    $profiles = @(Get-DistroShelfProfiles)
+    $found = $false
+
+    foreach ($profile in $profiles) {
+        if ([string]$profile.Id -eq $Id) {
+            $profile | Add-Member -NotePropertyName Terminal -NotePropertyValue $Terminal -Force
+            $found = $true
+            break
+        }
+    }
+
+    if (-not $found) { throw "Profile not found: $Id" }
+    Save-DistroShelfProfiles $profiles
+    return Get-DistroShelfProfileById -Id $Id
 }
 
 function Remove-DistroShelfProfileRecord {
