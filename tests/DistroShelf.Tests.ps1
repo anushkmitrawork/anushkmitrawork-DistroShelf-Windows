@@ -38,6 +38,9 @@ try {
     $p1 = New-DistroShelfProfile -Distro Ubuntu
     $p2 = New-DistroShelfProfile -Distro Ubuntu
     $p3 = New-DistroShelfProfile -Distro Fedora
+    $debian1 = New-DistroShelfProfile -Distro Debian
+    Set-DistroShelfProfileStatus -Id $debian1.Id -Status 'Ready' | Out-Null
+    $debian2 = New-DistroShelfProfile -Distro Debian
 
     if ($p1.WslName -eq 'DistroShelf-Ubuntu1' -and $p2.WslName -eq 'DistroShelf-Ubuntu2' -and $p3.WslName -eq 'DistroShelf-Fedora1') {
         Write-Host 'PASS  independent profile numbering'
@@ -45,8 +48,14 @@ try {
         Write-Host "FAIL  profile numbering: $($p1.WslName), $($p2.WslName), $($p3.WslName)"; $failed++
     }
 
+    if ($debian1.Name -eq 'Debian1' -and $debian1.Status -eq 'Ready' -and $debian2.Name -eq 'Debian2' -and $debian2.Status -eq 'Pending' -and $debian1.WslName -ne $debian2.WslName) {
+        Write-Host 'PASS  installed distro creates independent next profile'
+    } else {
+        Write-Host "FAIL  repeated installed distro profile: $($debian1.Name)/$($debian1.Status), $($debian2.Name)/$($debian2.Status)"; $failed++
+    }
+
     $names = @(Get-DistroShelfProfiles | Select-Object -ExpandProperty WslName)
-    if ($names.Count -eq 3 -and ($names | Select-Object -Unique).Count -eq 3) {
+    if ($names.Count -eq 5 -and ($names | Select-Object -Unique).Count -eq 5) {
         Write-Host 'PASS  profile records remain independent'
     } else { Write-Host 'FAIL  profile records are not independent'; $failed++ }
 
@@ -62,7 +71,7 @@ try {
     } else { Write-Host 'FAIL  profile status or terminal persistence'; $failed++ }
 
     $remaining = @(Get-DistroShelfProfiles)
-    if (($remaining | Where-Object Id -eq $p1.Id) -and ($remaining | Where-Object Id -eq $p2.Id) -and ($remaining | Where-Object Id -eq $p3.Id)) {
+    if (($remaining | Where-Object Id -eq $p1.Id) -and ($remaining | Where-Object Id -eq $p2.Id) -and ($remaining | Where-Object Id -eq $p3.Id) -and ($remaining | Where-Object Id -eq $debian1.Id) -and ($remaining | Where-Object Id -eq $debian2.Id)) {
         Write-Host 'PASS  profile records survive updates'
     } else { Write-Host 'FAIL  profile records lost during updates'; $failed++ }
 } finally {
