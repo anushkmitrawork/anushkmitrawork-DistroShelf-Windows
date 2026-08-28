@@ -13,6 +13,9 @@ $script:SelectedDistro = 'Ubuntu'
 $script:SelectedProfileId = $null
 $script:SelectedDistroWslName = $null
 $script:CreatingProfile = $false
+$script:DistroDropDownResetting = $false
+$script:DistroDropDownSuppressRestore = $false
+$script:DistroDropDownPrevious = $null
 
 function Get-WslDistros {
     try { return @((& wsl.exe --list --quiet 2>$null) | ForEach-Object { ($_ -replace "`0", '').Trim() } | Where-Object { $_ }) } catch { return @() }
@@ -210,11 +213,36 @@ $profileCombo.Add_SelectedIndexChanged({
     }
 })
 
+$distroCombo.Add_DropDown({
+    $current = Get-SelectedProfile
+    if($current -and $current.Status -eq 'Ready' -and -not $script:DistroDropDownResetting){
+        $script:DistroDropDownPrevious = $script:SelectedDistro
+        $script:DistroDropDownResetting = $true
+        $distroCombo.SelectedIndex = -1
+        $script:DistroDropDownResetting = $false
+    }
+})
+
+$distroCombo.Add_DropDownClosed({
+    if($distroCombo.SelectedIndex -lt 0 -and $script:DistroDropDownPrevious){
+        $previous = $script:DistroDropDownPrevious
+        $script:DistroDropDownPrevious = $null
+        $script:DistroDropDownSuppressRestore = $true
+        $distroCombo.SelectedItem = $previous
+        $script:DistroDropDownSuppressRestore = $false
+    } else {
+        $script:DistroDropDownPrevious = $null
+    }
+})
+
 $distroCombo.Add_SelectedIndexChanged({
-    $script:SelectedDistro=[string]$distroCombo.SelectedItem
-    New-SelectedDistroProfile
-    Refresh-ProfileCombo
-    Refresh-Scan
+    if($script:DistroDropDownResetting -or $script:DistroDropDownSuppressRestore){ return }
+    if($distroCombo.SelectedItem){
+        $script:SelectedDistro=[string]$distroCombo.SelectedItem
+        New-SelectedDistroProfile
+        Refresh-ProfileCombo
+        Refresh-Scan
+    }
 })
 
 function Refresh-Scan {
