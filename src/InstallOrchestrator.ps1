@@ -7,6 +7,7 @@ function Invoke-DistroShelfInstall {
     param(
         [Parameter(Mandatory)][ValidateSet('Ubuntu','Debian','Fedora','Arch Linux','openSUSE')][string]$Distro,
         [string]$Terminal = 'GNOME Console',
+        [string]$ProfileId,
         [scriptblock]$OnProgress,
         [scriptblock]$OnStatus
     )
@@ -16,24 +17,26 @@ function Invoke-DistroShelfInstall {
         if ($OnStatus) { & $OnStatus $Message }
     }
 
-    Report-Progress 5 "Creating $Distro profile..."
-    $profile = New-DistroShelfProfile -Distro $Distro
+    Report-Progress 5 "Preparing $Distro profile..."
+
+    $profile = $null
+    if ($ProfileId) {
+        $profile = Get-DistroShelfProfileById -Id $ProfileId
+        if (-not $profile) { throw "Selected DistroShelf profile was not found: $ProfileId" }
+        if ([string]$profile.Distro -ne $Distro) { throw "Selected profile belongs to $($profile.Distro), not $Distro." }
+    } else {
+        $profile = New-DistroShelfProfile -Distro $Distro
+    }
 
     try {
-        $profiles = @(Get-DistroShelfProfiles)
-        foreach ($item in $profiles) {
-            if ($item.Id -eq $profile.Id) {
-                $item | Add-Member -NotePropertyName Terminal -NotePropertyValue $Terminal -Force
-                $item.Status = 'Preparing rootfs'
-                break
-            }
-        }
-        Save-DistroShelfProfiles $profiles
+        Set-DistroShelfProfileTerminal -Id $profile.Id -Terminal $Terminal
+        Set-DistroShelfProfileStatus -Id $profile.Id -Status 'Preparing rootfs'
 
         Report-Progress 15 'Downloading and verifying Linux rootfs...'
         $artifact = Save-DistroShelfRootfs -Distro $Distro -DestinationDirectory (Join-Path $env:LOCALAPPDATA 'DistroShelf\cache')
 
         Report-Progress 35 "Creating $($profile.Name) as an isolated WSL 2 profile..."
+        $profile = Get-DistroShelfProfileById -Id $profile.Id
         $import = Invoke-DistroShelfWslImport -Profile $profile -RootfsPath $artifact.Path -ExpectedSha256 $artifact.Sha256
 
         Set-DistroShelfProfileStatus -Id $profile.Id -Status 'Installing dependencies'
