@@ -29,7 +29,6 @@ $script:Components = @(
     @{ Key='distrobox'; Name='Distrobox'; Group='Core'; Detect={ Test-LinuxCommand 'distrobox' } }
     @{ Key='flatpak'; Name='Flatpak'; Group='GUI'; Detect={ Test-LinuxCommand 'flatpak' } }
     @{ Key='flathub'; Name='Flathub'; Group='GUI'; Detect={ Test-Flathub } }
-    @{ Key='terminal'; Name='GNOME Console'; Group='GUI'; Detect={ Test-LinuxCommand 'kgx' } }
     @{ Key='distroshelf'; Name='DistroShelf'; Group='GUI'; Detect={ Test-DistroShelf } }
     @{ Key='git'; Name='Git for Windows'; Group='Developer'; Detect={ Test-WindowsCommand 'git.exe' } }
 )
@@ -58,29 +57,19 @@ function Find-UbuntuDistro {
 }
 
 function Test-Wsl2 {
-    # Detect WSL itself first. A WSL 2 distro is definitive evidence that WSL 2
-    # is installed, regardless of the configured default WSL version.
     try {
         $wslCommand = Get-Command 'wsl.exe' -ErrorAction Stop
-
         $distros = @(& $wslCommand.Source --list --verbose 2>&1)
         $distroText = ($distros -join "`n") -replace "`0", ''
-
-        # Typical output contains a VERSION column with a 2 for WSL 2 distros.
         foreach ($line in $distros) {
             $clean = ($line -replace "`0", '').Trim()
             if ($clean -match '\s2\s*$') { return 'Installed (WSL 2)' }
         }
-
-        # If there are no distros yet, the WSL default version can still tell us
-        # that WSL 2 is configured as the default.
         $status = @(& $wslCommand.Source --status 2>&1) -join "`n"
         $status = $status -replace "`0", ''
         if ($status -match '(?im)Default Version\s*:\s*2') {
             return 'Installed (WSL 2 default)'
         }
-
-        # WSL exists, but no evidence of WSL 2 was found.
         if ($distroText -or $status) { return 'Installed (WSL 2 not detected)' }
     } catch {}
     return 'Not installed'
@@ -136,8 +125,8 @@ function Test-WindowsCommand {
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'DistroShelf for Windows'
 $form.StartPosition = 'CenterScreen'
-$form.Size = New-Object System.Drawing.Size(760, 680)
-$form.MinimumSize = New-Object System.Drawing.Size(700, 620)
+$form.Size = New-Object System.Drawing.Size(760, 700)
+$form.MinimumSize = New-Object System.Drawing.Size(700, 640)
 
 $title = New-Object System.Windows.Forms.Label
 $title.Text = 'DistroShelf for Windows'
@@ -154,7 +143,7 @@ $form.Controls.Add($subtitle)
 
 $list = New-Object System.Windows.Forms.ListView
 $list.Location = New-Object System.Drawing.Point(24, 92)
-$list.Size = New-Object System.Drawing.Size(696, 330)
+$list.Size = New-Object System.Drawing.Size(696, 320)
 $list.View = 'Details'
 $list.FullRowSelect = $true
 $list.CheckBoxes = $true
@@ -164,44 +153,64 @@ $list.GridLines = $false
 [void]$list.Columns.Add('Status', 340)
 $form.Controls.Add($list)
 
+# Beginner-friendly terminal preference section. It starts collapsed and sits
+# directly after the Flathub/dependency area, before DistroShelf itself.
+$terminalButton = New-Object System.Windows.Forms.Button
+$terminalButton.Text = '▶  Terminal Preference for DistroShelf'
+$terminalButton.TextAlign = 'MiddleLeft'
+$terminalButton.Location = New-Object System.Drawing.Point(24, 425)
+$terminalButton.Size = New-Object System.Drawing.Size(696, 36)
+$form.Controls.Add($terminalButton)
+
+$terminalPanel = New-Object System.Windows.Forms.Panel
+$terminalPanel.Location = New-Object System.Drawing.Point(24, 466)
+$terminalPanel.Size = New-Object System.Drawing.Size(696, 86)
+$terminalPanel.BorderStyle = 'FixedSingle'
+$terminalPanel.Visible = $false
+$form.Controls.Add($terminalPanel)
+
 $terminalLabel = New-Object System.Windows.Forms.Label
-$terminalLabel.Text = 'Preferred DistroShelf terminal:'
-$terminalLabel.Location = New-Object System.Drawing.Point(24, 445)
+$terminalLabel.Text = 'Choose the terminal DistroShelf should use:'
+$terminalLabel.Location = New-Object System.Drawing.Point(12, 12)
 $terminalLabel.AutoSize = $true
-$form.Controls.Add($terminalLabel)
+$terminalPanel.Controls.Add($terminalLabel)
 
 $terminalCombo = New-Object System.Windows.Forms.ComboBox
-$terminalCombo.Location = New-Object System.Drawing.Point(24, 470)
+$terminalCombo.Location = New-Object System.Drawing.Point(12, 38)
 $terminalCombo.Size = New-Object System.Drawing.Size(360, 30)
 $terminalCombo.DropDownStyle = 'DropDownList'
 foreach ($terminal in $script:SupportedDistroShelfTerminals) {
     [void]$terminalCombo.Items.Add($terminal)
 }
 $terminalCombo.SelectedItem = 'GNOME Console'
-$form.Controls.Add($terminalCombo)
+$terminalPanel.Controls.Add($terminalCombo)
 
-$terminalInfo = New-Object System.Windows.Forms.Label
-$terminalInfo.Text = 'Only terminals currently supported by DistroShelf are offered. Windows Terminal and custom terminals are intentionally excluded.'
-$terminalInfo.Location = New-Object System.Drawing.Point(400, 473)
-$terminalInfo.Size = New-Object System.Drawing.Size(320, 45)
-$form.Controls.Add($terminalInfo)
+$terminalButton.Add_Click({
+    if ($terminalPanel.Visible) {
+        $terminalPanel.Visible = $false
+        $terminalButton.Text = '▶  Terminal Preference for DistroShelf'
+    } else {
+        $terminalPanel.Visible = $true
+        $terminalButton.Text = '▼  Terminal Preference for DistroShelf'
+    }
+})
 
 $refresh = New-Object System.Windows.Forms.Button
 $refresh.Text = 'Scan again'
-$refresh.Location = New-Object System.Drawing.Point(24, 535)
+$refresh.Location = New-Object System.Drawing.Point(24, 570)
 $refresh.Size = New-Object System.Drawing.Size(120, 38)
 $form.Controls.Add($refresh)
 
 $install = New-Object System.Windows.Forms.Button
 $install.Text = 'Install selected'
-$install.Location = New-Object System.Drawing.Point(155, 535)
+$install.Location = New-Object System.Drawing.Point(155, 570)
 $install.Size = New-Object System.Drawing.Size(140, 38)
 $form.Controls.Add($install)
 
 $info = New-Object System.Windows.Forms.Label
-$info.Text = 'Detection prototype: installation actions will be enabled after the detection layer is validated.'
-$info.Location = New-Object System.Drawing.Point(24, 590)
-$info.AutoSize = $true
+$info.Text = 'Only terminals currently supported by DistroShelf are offered. Installation actions remain disabled while detection is being validated.'
+$info.Location = New-Object System.Drawing.Point(24, 620)
+$info.Size = New-Object System.Drawing.Size(696, 35)
 $form.Controls.Add($info)
 
 function Refresh-Scan {
