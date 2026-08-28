@@ -6,7 +6,7 @@ Add-Type -AssemblyName System.Drawing
 
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
-# Keep this list aligned with DistroShelf's supported-terminal choices.
+# Keep this list aligned with DistroShelf's currently supported terminal choices.
 # Windows Terminal and arbitrary custom terminals are intentionally excluded.
 $script:SupportedDistroShelfTerminals = @(
     'Alacritty',
@@ -67,9 +67,7 @@ function Test-Wsl2 {
         }
         $status = @(& $wslCommand.Source --status 2>&1) -join "`n"
         $status = $status -replace "`0", ''
-        if ($status -match '(?im)Default Version\s*:\s*2') {
-            return 'Installed (WSL 2 default)'
-        }
+        if ($status -match '(?im)Default Version\s*:\s*2') { return 'Installed (WSL 2 default)' }
         if ($distroText -or $status) { return 'Installed (WSL 2 not detected)' }
     } catch {}
     return 'Not installed'
@@ -141,59 +139,119 @@ $subtitle.Location = New-Object System.Drawing.Point(28, 58)
 $subtitle.AutoSize = $true
 $form.Controls.Add($subtitle)
 
-$list = New-Object System.Windows.Forms.ListView
-$list.Location = New-Object System.Drawing.Point(24, 92)
-$list.Size = New-Object System.Drawing.Size(696, 320)
-$list.View = 'Details'
-$list.FullRowSelect = $true
-$list.CheckBoxes = $true
-$list.GridLines = $false
-[void]$list.Columns.Add('Component', 220)
-[void]$list.Columns.Add('Category', 110)
-[void]$list.Columns.Add('Status', 340)
-$form.Controls.Add($list)
+# A table is used instead of a ListView so the terminal preference can occupy
+# a real row directly between Flathub and DistroShelf, like the DistroShelf UI.
+$table = New-Object System.Windows.Forms.TableLayoutPanel
+$table.Location = New-Object System.Drawing.Point(24, 92)
+$table.Size = New-Object System.Drawing.Size(696, 430)
+$table.ColumnCount = 3
+$table.RowCount = 1
+$table.CellBorderStyle = 'None'
+$table.BackColor = [System.Drawing.Color]::White
+$table.Padding = New-Object System.Windows.Forms.Padding(0)
+$table.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Absolute, 220)))
+$table.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Absolute, 110)))
+$table.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+$form.Controls.Add($table)
 
-# Beginner-friendly terminal preference section. It starts collapsed and sits
-# directly after the Flathub/dependency area, before DistroShelf itself.
+function Add-HeaderCell {
+    param([string]$Text, [int]$Column)
+    $label = New-Object System.Windows.Forms.Label
+    $label.Text = $Text
+    $label.Font = New-Object System.Drawing.Font('Segoe UI', 9)
+    $label.Dock = 'Fill'
+    $label.TextAlign = 'MiddleLeft'
+    $label.Padding = New-Object System.Windows.Forms.Padding(8, 0, 0, 0)
+    [void]$table.Controls.Add($label, $Column, 0)
+}
+
+Add-HeaderCell 'Component' 0
+Add-HeaderCell 'Category' 1
+Add-HeaderCell 'Status' 2
+
+function Add-ComponentRow {
+    param([hashtable]$Component)
+    $row = $table.RowCount
+    $table.RowCount++
+    $table.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 34)))
+
+    $check = New-Object System.Windows.Forms.CheckBox
+    $check.Text = $Component.Name
+    $check.Tag = $Component
+    $check.Dock = 'Fill'
+    $check.Padding = New-Object System.Windows.Forms.Padding(8, 0, 0, 0)
+    $check.Font = New-Object System.Drawing.Font('Segoe UI', 9)
+    [void]$table.Controls.Add($check, 0, $row)
+
+    $category = New-Object System.Windows.Forms.Label
+    $category.Text = $Component.Group
+    $category.Dock = 'Fill'
+    $category.TextAlign = 'MiddleLeft'
+    [void]$table.Controls.Add($category, 1, $row)
+
+    $status = New-Object System.Windows.Forms.Label
+    $status.Dock = 'Fill'
+    $status.TextAlign = 'MiddleLeft'
+    $status.Tag = $Component.Key
+    $status.Padding = New-Object System.Windows.Forms.Padding(0, 0, 0, 0)
+    [void]$table.Controls.Add($status, 2, $row)
+}
+
+foreach ($component in $script:Components[0..5]) { Add-ComponentRow $component }
+
+# Terminal preference is deliberately a row between Flathub and DistroShelf.
+$terminalRow = $table.RowCount
+$table.RowCount++
+$table.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
+
+$terminalHost = New-Object System.Windows.Forms.Panel
+$terminalHost.Dock = 'Fill'
+$terminalHost.Padding = New-Object System.Windows.Forms.Padding(0)
+$table.Controls.Add($terminalHost, 0, $terminalRow)
+$table.SetColumnSpan($terminalHost, 3)
+
 $terminalButton = New-Object System.Windows.Forms.Button
 $terminalButton.Text = '▶  Terminal Preference for DistroShelf'
 $terminalButton.TextAlign = 'MiddleLeft'
-$terminalButton.Location = New-Object System.Drawing.Point(24, 425)
-$terminalButton.Size = New-Object System.Drawing.Size(696, 36)
-$form.Controls.Add($terminalButton)
+$terminalButton.Dock = 'Top'
+$terminalButton.Height = 34
+$terminalButton.FlatStyle = 'Standard'
+$terminalHost.Controls.Add($terminalButton)
 
 $terminalPanel = New-Object System.Windows.Forms.Panel
-$terminalPanel.Location = New-Object System.Drawing.Point(24, 466)
-$terminalPanel.Size = New-Object System.Drawing.Size(696, 86)
-$terminalPanel.BorderStyle = 'FixedSingle'
+$terminalPanel.Dock = 'Top'
+$terminalPanel.Height = 86
 $terminalPanel.Visible = $false
-$form.Controls.Add($terminalPanel)
+$terminalHost.Controls.Add($terminalPanel)
+$terminalHost.Controls.SetChildIndex($terminalButton, 1)
+$terminalHost.Controls.SetChildIndex($terminalPanel, 0)
 
 $terminalLabel = New-Object System.Windows.Forms.Label
 $terminalLabel.Text = 'Choose the terminal DistroShelf should use:'
-$terminalLabel.Location = New-Object System.Drawing.Point(12, 12)
+$terminalLabel.Location = New-Object System.Drawing.Point(12, 10)
 $terminalLabel.AutoSize = $true
 $terminalPanel.Controls.Add($terminalLabel)
 
 $terminalCombo = New-Object System.Windows.Forms.ComboBox
-$terminalCombo.Location = New-Object System.Drawing.Point(12, 38)
+$terminalCombo.Location = New-Object System.Drawing.Point(12, 36)
 $terminalCombo.Size = New-Object System.Drawing.Size(360, 30)
 $terminalCombo.DropDownStyle = 'DropDownList'
-foreach ($terminal in $script:SupportedDistroShelfTerminals) {
-    [void]$terminalCombo.Items.Add($terminal)
-}
+foreach ($terminal in $script:SupportedDistroShelfTerminals) { [void]$terminalCombo.Items.Add($terminal) }
 $terminalCombo.SelectedItem = 'GNOME Console'
 $terminalPanel.Controls.Add($terminalCombo)
 
 $terminalButton.Add_Click({
+    $terminalPanel.Visible = -not $terminalPanel.Visible
     if ($terminalPanel.Visible) {
-        $terminalPanel.Visible = $false
-        $terminalButton.Text = '▶  Terminal Preference for DistroShelf'
-    } else {
-        $terminalPanel.Visible = $true
         $terminalButton.Text = '▼  Terminal Preference for DistroShelf'
+    } else {
+        $terminalButton.Text = '▶  Terminal Preference for DistroShelf'
     }
+    $table.PerformLayout()
 })
+
+Add-ComponentRow $script:Components[6]
+Add-ComponentRow $script:Components[7]
 
 $refresh = New-Object System.Windows.Forms.Button
 $refresh.Text = 'Scan again'
@@ -214,15 +272,20 @@ $info.Size = New-Object System.Drawing.Size(696, 35)
 $form.Controls.Add($info)
 
 function Refresh-Scan {
-    $list.Items.Clear()
-    foreach ($component in $script:Components) {
-        $status = & $component.Detect
-        $item = New-Object System.Windows.Forms.ListViewItem($component.Name)
-        [void]$item.SubItems.Add($component.Group)
-        [void]$item.SubItems.Add($status)
-        $item.Tag = $component
-        $item.Checked = ($status -notlike 'Installed*' -and $status -ne 'Configured')
-        [void]$list.Items.Add($item)
+    foreach ($control in $table.Controls) {
+        if ($control -is [System.Windows.Forms.CheckBox] -and $control.Tag) {
+            $component = $control.Tag
+            $status = & $component.Detect
+            $statusLabel = $null
+            foreach ($child in $table.Controls) {
+                if ($child -is [System.Windows.Forms.Label] -and $child.Tag -eq $component.Key) {
+                    $statusLabel = $child
+                    break
+                }
+            }
+            if ($statusLabel) { $statusLabel.Text = $status }
+            $control.Checked = ($status -notlike 'Installed*' -and $status -ne 'Configured')
+        }
     }
 }
 
