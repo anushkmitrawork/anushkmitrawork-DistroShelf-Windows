@@ -139,8 +139,8 @@ $subtitle.Location = New-Object System.Drawing.Point(28, 58)
 $subtitle.AutoSize = $true
 $form.Controls.Add($subtitle)
 
-# A table is used instead of a ListView so the terminal preference can occupy
-# a real row directly between Flathub and DistroShelf, like the DistroShelf UI.
+# The table keeps Terminal Preference as a real row directly between
+# Flathub and DistroShelf.
 $table = New-Object System.Windows.Forms.TableLayoutPanel
 $table.Location = New-Object System.Drawing.Point(24, 92)
 $table.Size = New-Object System.Drawing.Size(696, 430)
@@ -199,16 +199,24 @@ function Add-ComponentRow {
 
 foreach ($component in $script:Components[0..5]) { Add-ComponentRow $component }
 
-# Terminal preference is deliberately a row between Flathub and DistroShelf.
+# Terminal preference row: this is intentionally inserted after Flathub.
 $terminalRow = $table.RowCount
 $table.RowCount++
-$table.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::AutoSize)))
+$table.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 34)))
 
 $terminalHost = New-Object System.Windows.Forms.Panel
 $terminalHost.Dock = 'Fill'
-$terminalHost.Padding = New-Object System.Windows.Forms.Padding(0)
+$terminalHost.Margin = New-Object System.Windows.Forms.Padding(0)
 $table.Controls.Add($terminalHost, 0, $terminalRow)
-$table.SetColumnSpan($terminalHost, 3)
+[void]$table.SetColumnSpan($terminalHost, 3)
+
+# Add the expandable panel first, then the button. This gives the button
+# the correct top docking order and avoids the dropdown being clipped.
+$terminalPanel = New-Object System.Windows.Forms.Panel
+$terminalPanel.Dock = 'Top'
+$terminalPanel.Height = 86
+$terminalPanel.Visible = $false
+$terminalHost.Controls.Add($terminalPanel)
 
 $terminalButton = New-Object System.Windows.Forms.Button
 $terminalButton.Text = '▶  Terminal Preference for DistroShelf'
@@ -217,14 +225,6 @@ $terminalButton.Dock = 'Top'
 $terminalButton.Height = 34
 $terminalButton.FlatStyle = 'Standard'
 $terminalHost.Controls.Add($terminalButton)
-
-$terminalPanel = New-Object System.Windows.Forms.Panel
-$terminalPanel.Dock = 'Top'
-$terminalPanel.Height = 86
-$terminalPanel.Visible = $false
-$terminalHost.Controls.Add($terminalPanel)
-$terminalHost.Controls.SetChildIndex($terminalButton, 1)
-$terminalHost.Controls.SetChildIndex($terminalPanel, 0)
 
 $terminalLabel = New-Object System.Windows.Forms.Label
 $terminalLabel.Text = 'Choose the terminal DistroShelf should use:'
@@ -236,18 +236,26 @@ $terminalCombo = New-Object System.Windows.Forms.ComboBox
 $terminalCombo.Location = New-Object System.Drawing.Point(12, 36)
 $terminalCombo.Size = New-Object System.Drawing.Size(360, 30)
 $terminalCombo.DropDownStyle = 'DropDownList'
-foreach ($terminal in $script:SupportedDistroShelfTerminals) { [void]$terminalCombo.Items.Add($terminal) }
+foreach ($terminal in $script:SupportedDistroShelfTerminals) {
+    [void]$terminalCombo.Items.Add($terminal)
+}
 $terminalCombo.SelectedItem = 'GNOME Console'
 $terminalPanel.Controls.Add($terminalCombo)
 
 $terminalButton.Add_Click({
-    $terminalPanel.Visible = -not $terminalPanel.Visible
     if ($terminalPanel.Visible) {
-        $terminalButton.Text = '▼  Terminal Preference for DistroShelf'
-    } else {
+        $terminalPanel.Visible = $false
         $terminalButton.Text = '▶  Terminal Preference for DistroShelf'
+        $table.RowStyles[$terminalRow].SizeType = [System.Windows.Forms.SizeType]::Absolute
+        $table.RowStyles[$terminalRow].Height = 34
+    } else {
+        $terminalPanel.Visible = $true
+        $terminalButton.Text = '▼  Terminal Preference for DistroShelf'
+        $table.RowStyles[$terminalRow].SizeType = [System.Windows.Forms.SizeType]::Absolute
+        $table.RowStyles[$terminalRow].Height = 120
     }
     $table.PerformLayout()
+    $table.Refresh()
 })
 
 Add-ComponentRow $script:Components[6]
