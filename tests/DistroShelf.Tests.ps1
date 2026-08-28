@@ -40,6 +40,7 @@ try {
     $p3 = New-DistroShelfProfile -Distro Fedora
     $debian1 = New-DistroShelfProfile -Distro Debian
     Set-DistroShelfProfileStatus -Id $debian1.Id -Status 'Ready' | Out-Null
+    $debian1 = Get-DistroShelfProfileById -Id $debian1.Id
     $debian2 = New-DistroShelfProfile -Distro Debian
 
     if ($p1.WslName -eq 'DistroShelf-Ubuntu1' -and $p2.WslName -eq 'DistroShelf-Ubuntu2' -and $p3.WslName -eq 'DistroShelf-Fedora1') {
