@@ -21,16 +21,10 @@ $required = @(
 $failed = 0
 foreach ($file in $required) {
     $path = Join-Path $src $file
-    if (Test-Path -LiteralPath $path) {
-        Write-Host "PASS  file exists: $file"
-    } else {
-        Write-Host "FAIL  missing: $file"
-        $failed++
-    }
+    if (Test-Path -LiteralPath $path) { Write-Host "PASS  file exists: $file" }
+    else { Write-Host "FAIL  missing: $file"; $failed++ }
 }
 
-# Load the profile manager and validate profile naming without creating a real
-# profile. This test uses a temporary profile store and restores the variables.
 . (Join-Path $src 'ProfileManager.ps1')
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("DistroShelf-Test-" + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
@@ -48,40 +42,45 @@ try {
     if ($p1.WslName -eq 'DistroShelf-Ubuntu1' -and $p2.WslName -eq 'DistroShelf-Ubuntu2' -and $p3.WslName -eq 'DistroShelf-Fedora1') {
         Write-Host 'PASS  independent profile numbering'
     } else {
-        Write-Host "FAIL  profile numbering: $($p1.WslName), $($p2.WslName), $($p3.WslName)"
-        $failed++
+        Write-Host "FAIL  profile numbering: $($p1.WslName), $($p2.WslName), $($p3.WslName)"; $failed++
     }
 
     $names = @(Get-DistroShelfProfiles | Select-Object -ExpandProperty WslName)
     if ($names.Count -eq 3 -and ($names | Select-Object -Unique).Count -eq 3) {
         Write-Host 'PASS  profile records remain independent'
-    } else {
-        Write-Host 'FAIL  profile records are not independent'
-        $failed++
-    }
+    } else { Write-Host 'FAIL  profile records are not independent'; $failed++ }
+
+    $found = Get-DistroShelfProfileById -Id $p2.Id
+    if ($found -and $found.Name -eq 'Ubuntu2') { Write-Host 'PASS  profile lookup by ID' }
+    else { Write-Host 'FAIL  profile lookup by ID'; $failed++ }
+
+    Set-DistroShelfProfileTerminal -Id $p2.Id -Terminal 'Kitty' | Out-Null
+    Set-DistroShelfProfileStatus -Id $p2.Id -Status 'Ready' | Out-Null
+    $updated = Get-DistroShelfProfileById -Id $p2.Id
+    if ($updated.Status -eq 'Ready' -and $updated.Terminal -eq 'Kitty') {
+        Write-Host 'PASS  profile status and terminal persist independently'
+    } else { Write-Host 'FAIL  profile status or terminal persistence'; $failed++ }
+
+    $remaining = @(Get-DistroShelfProfiles)
+    if (($remaining | Where-Object Id -eq $p1.Id) -and ($remaining | Where-Object Id -eq $p2.Id) -and ($remaining | Where-Object Id -eq $p3.Id)) {
+        Write-Host 'PASS  profile records survive updates'
+    } else { Write-Host 'FAIL  profile records lost during updates'; $failed++ }
 } finally {
     $script:DistroShelfProfileRoot = $oldRoot
     $script:DistroShelfProfileFile = $oldFile
     Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-# Static safety checks: these files must not contain destructive unregister
-# commands as part of the normal installation path.
 $unsafe = @('--unregister', 'wsl --unregister')
 foreach ($file in @('WslImporter.ps1','InstallOrchestrator.ps1')) {
     $text = Get-Content -LiteralPath (Join-Path $src $file) -Raw
     foreach ($token in $unsafe) {
         if ($text -match [regex]::Escape($token)) {
-            Write-Host "FAIL  destructive token '$token' found in $file"
-            $failed++
+            Write-Host "FAIL  destructive token '$token' found in $file"; $failed++
         }
     }
 }
 
-if ($failed -gt 0) {
-    Write-Host "`n$failed test(s) failed."
-    exit 1
-}
-
+if ($failed -gt 0) { Write-Host "`n$failed test(s) failed."; exit 1 }
 Write-Host "`nAll non-destructive architecture tests passed."
 exit 0
