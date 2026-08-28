@@ -1,8 +1,7 @@
 # DistroShelf for Windows - distro-aware dependency engine
 #
 # This layer builds and executes a dependency plan INSIDE one selected WSL
-# profile. Execution is intentionally opt-in; the planner can be used by the
-# GUI without changing the machine.
+# profile. Every command is targeted at that profile's unique WSL name.
 
 . (Join-Path $PSScriptRoot 'ProfileManager.ps1')
 
@@ -39,6 +38,9 @@ $script:DistroShelfDependencyPackages = @{
     }
 }
 
+$script:DistroShelfFlathubUrl = 'https://dl.flathub.org/repo/flathub.flatpakrepo'
+$script:DistroShelfFlatpakId = 'com.ranfdev.DistroShelf'
+
 function Get-DistroShelfDependencyPlan {
     param([Parameter(Mandatory)][string]$Distro)
 
@@ -55,8 +57,8 @@ function Get-DistroShelfDependencyPlan {
             [pscustomobject]@{ Name='Podman'; Command=$p.Podman }
             [pscustomobject]@{ Name='Distrobox'; Command=$p.Distrobox }
             [pscustomobject]@{ Name='Flatpak'; Command=$p.Flatpak }
-            [pscustomobject]@{ Name='Flathub'; Command='configure official Flathub remote' }
-            [pscustomobject]@{ Name='DistroShelf'; Command='install verified DistroShelf package' }
+            [pscustomobject]@{ Name='Flathub'; Command="flatpak remote-add --if-not-exists flathub $script:DistroShelfFlathubUrl" }
+            [pscustomobject]@{ Name='DistroShelf'; Command="flatpak install -y flathub $script:DistroShelfFlatpakId" }
         )
     }
 }
@@ -83,17 +85,49 @@ function Test-DistroShelfProfileDependency {
     return ($LASTEXITCODE -eq 0)
 }
 
+function Test-DistroShelfFlatpakApp {
+    param([Parameter(Mandatory)][string]$WslName)
+    & wsl.exe --distribution $WslName -- bash -lc "flatpak info '$script:DistroShelfFlatpakId' >/dev/null 2>&1"
+    return ($LASTEXITCODE -eq 0)
+}
+
+function Test-DistroShelfFlathub {
+    param([Parameter(Mandatory)][string]$WslName)
+    & wsl.exe --distribution $WslName -- bash -lc "flatpak remotes --columns=name 2>/dev/null | grep -Fx flathub >/dev/null"
+    return ($LASTEXITCODE -eq 0)
+}
+
 function Invoke-DistroShelfDependencyInstall {
     param([Parameter(Mandatory)][pscustomobject]$Profile)
 
     $plan = Get-DistroShelfDependencyPlan $Profile.Distro
 
-    foreach ($step in $plan.Steps[0..3]) {
+    foreach ($step in $plan.Steps) {
         Invoke-DistroShelfProfileCommand -WslName $Profile.WslName -Command $step.Command
     }
 
-    # Flathub and DistroShelf installation are kept as separate provisioning
-    # stages because their official package/app identifiers must be verified
-    # before this function is allowed to make those changes.
-    throw "Core dependencies are provisioned for '$($Profile.WslName)'. Flathub and DistroShelf provisioning remains gated pending verified official package identifiers."
+    if (-not (Test-DistroShelfProfileDependency -WslName $Profile.WslName -Command 'podman')) {
+        throw "Podman verification failed in '$($Profile.WslName)'."
+    }
+    if (-not (Test-DistroShelfProfileDependency -WslName $Profile.WslName -Command 'distrobox')) {
+        throw "Distrobox verification failed in '$($Profile.WslName)'."
+    }
+    if (-not (Test-DistroShelfProfileDependency -WslName $Profile.WslName -Command 'flatpak')) {
+        throw "Flatpak verification failed in '$($Profile.WslName)'."
+    }
+    if (-not (Test-DistroShelfFlathub -WslName $Profile.WslName)) {
+        throw "Flathub verification failed in '$($Profile.WslName)'."
+    }
+    if (-not (Test-DistroShelfFlatpakApp -WslName $Profile.WslName)) {
+        throw "DistroShelf Flatpak verification failed in '$($Profile.WslName)'."
+    }
+
+    return [pscustomobject][ordered]@{
+        Profile = $Profile.WslName
+        Podman = $true
+        Distrobox = $true
+        Flatpak = $true
+        Flathub = $true
+        DistroShelf = $true
+    }
 }
