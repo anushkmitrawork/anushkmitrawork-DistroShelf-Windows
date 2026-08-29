@@ -2,6 +2,7 @@
 . (Join-Path $PSScriptRoot '..\Engine\TransactionEngine.ps1')
 . (Join-Path $PSScriptRoot '..\Engine\DagScheduler.ps1')
 . (Join-Path $PSScriptRoot '..\Engine\HashEngine.ps1')
+. (Join-Path $PSScriptRoot '..\Engine\StageExecutor.ps1')
 . (Join-Path $PSScriptRoot '..\Engine\AcceptanceEngine.ps1')
 . (Join-Path $PSScriptRoot '..\Distro\DistroDefinitions.ps1')
 . (Join-Path $PSScriptRoot 'RootfsAcquisition.ps1')
@@ -27,7 +28,7 @@ function Invoke-DistroShelfTrackBuilder {
         & $emit 20 'Testing root filesystem...'
         $rootTests=Invoke-DistroShelfTrackAcceptance -WslName $builderName -Tests @(
             @{Name='os-release';Command='test -s /etc/os-release'}
-            @{Name='shell';Command='bash -lc "printf DISTROSHELF_ROOTFS_OK"';ExpectedOutput='DISTROSHELF_ROOTFS_OK'}
+            @{Name='shell';Command='printf DISTROSHELF_ROOTFS_OK';ExpectedOutput='DISTROSHELF_ROOTFS_OK'}
         )
         $rootHash=Get-DistroShelfTreeHash -Root $distroRoot
         $verified=@{rootfs=$rootHash}
