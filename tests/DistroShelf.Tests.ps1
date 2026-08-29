@@ -32,7 +32,7 @@ try {
     Set-DistroShelfProfileStatus -Id $p1.Id -Status 'Ready' | Out-Null
     $p2 = New-DistroShelfProfile -Distro Ubuntu
     Set-DistroShelfProfileStatus -Id $p2.Id -Status 'Ready' | Out-Null
-    $pending = [pscustomobject]@{
+    $preview = [pscustomobject]@{
         Id = '__PREVIEW__'; Name = 'Ubuntu3'; Distro = 'Ubuntu'; WslName = 'DistroShelf-Ubuntu3';
         PackageManager = 'apt'; Status = 'Pending'; IsNew = $true
     }
@@ -49,12 +49,20 @@ try {
         Write-Host "FAIL  profile numbering: $($p1.WslName), $($p2.WslName), $($p3.WslName)"; $failed++
     }
 
-    $storedPending = @(Get-DistroShelfProfiles | Where-Object { [string]$_.Status -eq 'Pending' -and [string]$_.Distro -eq 'Ubuntu' })
-    $next = Get-NextDistroShelfProfileNumber -Distro Ubuntu
-    if ($pending.Name -eq 'Ubuntu3' -and $storedPending.Count -eq 0 -and $next -eq 3) {
+    # A GUI preview must be able to display Ubuntu3 without consuming the number.
+    # Do not persist the preview and verify the profile manager still reports 3.
+    $nextBeforeCommit = Get-NextDistroShelfProfileNumber -Distro Ubuntu
+    if ($preview.Name -eq 'Ubuntu3' -and $nextBeforeCommit -eq 3 -and @(Get-DistroShelfProfiles | Where-Object { $_.Name -eq 'Ubuntu3' }).Count -eq 0) {
         Write-Host 'PASS  pending previews do not change next committed profile number'
     } else {
-        Write-Host "FAIL  pending preview numbering: preview=$($pending.Name), storedPending=$($storedPending.Count), next=$next"; $failed++
+        Write-Host "FAIL  pending preview numbering: preview=$($preview.Name), next=$nextBeforeCommit"; $failed++
+    }
+
+    $ubuntu3 = New-DistroShelfProfile -Distro Ubuntu
+    if ($ubuntu3.Name -eq 'Ubuntu3' -and $ubuntu3.Status -eq 'Pending') {
+        Write-Host 'PASS  next committed profile uses preview number'
+    } else {
+        Write-Host "FAIL  next committed Ubuntu profile: $($ubuntu3.Name)/$($ubuntu3.Status)"; $failed++
     }
 
     if ($debian1.Name -eq 'Debian1' -and $debian1.Status -eq 'Ready' -and $debian2.Name -eq 'Debian2' -and $debian2.Status -eq 'Pending' -and $debian1.WslName -ne $debian2.WslName) {
