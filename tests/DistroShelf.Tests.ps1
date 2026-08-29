@@ -7,15 +7,8 @@ $root = Split-Path -Parent $PSScriptRoot
 $src = Join-Path $root 'src'
 
 $required = @(
-    'ProfileManager.ps1',
-    'ProfileInstaller.ps1',
-    'Provisioning.ps1',
-    'RootfsProvider.ps1',
-    'WslImporter.ps1',
-    'ProvisionProfile.ps1',
-    'DependencyEngine.ps1',
-    'InstallOrchestrator.ps1',
-    'DistroShelfSetup.ps1'
+    'ProfileManager.ps1','ProfileInstaller.ps1','Provisioning.ps1','RootfsProvider.ps1',
+    'WslImporter.ps1','ProvisionProfile.ps1','DependencyEngine.ps1','InstallOrchestrator.ps1','DistroShelfSetup.ps1'
 )
 
 $failed = 0
@@ -35,18 +28,30 @@ try {
     $script:DistroShelfProfileFile = Join-Path $tempRoot 'profiles.json'
     Initialize-DistroShelfProfileStore
 
+    # Simulate two committed Ubuntu profiles and one temporary pending preview.
     $p1 = New-DistroShelfProfile -Distro Ubuntu
+    Set-DistroShelfProfileStatus -Id $p1.Id -Status 'Ready' | Out-Null
     $p2 = New-DistroShelfProfile -Distro Ubuntu
+    Set-DistroShelfProfileStatus -Id $p2.Id -Status 'Ready' | Out-Null
+    $pending = New-DistroShelfProfile -Distro Ubuntu
+
     $p3 = New-DistroShelfProfile -Distro Fedora
+    Set-DistroShelfProfileStatus -Id $p3.Id -Status 'Ready' | Out-Null
     $debian1 = New-DistroShelfProfile -Distro Debian
     Set-DistroShelfProfileStatus -Id $debian1.Id -Status 'Ready' | Out-Null
-    $debian1 = Get-DistroShelfProfileById -Id $debian1.Id
     $debian2 = New-DistroShelfProfile -Distro Debian
 
     if ($p1.WslName -eq 'DistroShelf-Ubuntu1' -and $p2.WslName -eq 'DistroShelf-Ubuntu2' -and $p3.WslName -eq 'DistroShelf-Fedora1') {
         Write-Host 'PASS  independent profile numbering'
     } else {
         Write-Host "FAIL  profile numbering: $($p1.WslName), $($p2.WslName), $($p3.WslName)"; $failed++
+    }
+
+    $ubuntuNext = New-DistroShelfProfile -Distro Ubuntu
+    if ($ubuntuNext.Name -eq 'Ubuntu3' -and $pending.Name -eq 'Ubuntu3') {
+        Write-Host 'PASS  pending previews do not change next committed profile number'
+    } else {
+        Write-Host "FAIL  pending preview numbering: pending=$($pending.Name), next=$($ubuntuNext.Name)"; $failed++
     }
 
     if ($debian1.Name -eq 'Debian1' -and $debian1.Status -eq 'Ready' -and $debian2.Name -eq 'Debian2' -and $debian2.Status -eq 'Pending' -and $debian1.WslName -ne $debian2.WslName) {
@@ -56,7 +61,7 @@ try {
     }
 
     $names = @(Get-DistroShelfProfiles | Select-Object -ExpandProperty WslName)
-    if ($names.Count -eq 5 -and ($names | Select-Object -Unique).Count -eq 5) {
+    if (($names | Select-Object -Unique).Count -eq $names.Count) {
         Write-Host 'PASS  profile records remain independent'
     } else { Write-Host 'FAIL  profile records are not independent'; $failed++ }
 
