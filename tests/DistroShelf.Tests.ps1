@@ -28,12 +28,14 @@ try {
     $script:DistroShelfProfileFile = Join-Path $tempRoot 'profiles.json'
     Initialize-DistroShelfProfileStore
 
-    # Simulate two committed Ubuntu profiles and one temporary pending preview.
     $p1 = New-DistroShelfProfile -Distro Ubuntu
     Set-DistroShelfProfileStatus -Id $p1.Id -Status 'Ready' | Out-Null
     $p2 = New-DistroShelfProfile -Distro Ubuntu
     Set-DistroShelfProfileStatus -Id $p2.Id -Status 'Ready' | Out-Null
-    $pending = New-DistroShelfProfile -Distro Ubuntu
+    $pending = [pscustomobject]@{
+        Id = '__PREVIEW__'; Name = 'Ubuntu3'; Distro = 'Ubuntu'; WslName = 'DistroShelf-Ubuntu3';
+        PackageManager = 'apt'; Status = 'Pending'; IsNew = $true
+    }
 
     $p3 = New-DistroShelfProfile -Distro Fedora
     Set-DistroShelfProfileStatus -Id $p3.Id -Status 'Ready' | Out-Null
@@ -47,11 +49,12 @@ try {
         Write-Host "FAIL  profile numbering: $($p1.WslName), $($p2.WslName), $($p3.WslName)"; $failed++
     }
 
-    $ubuntuNext = New-DistroShelfProfile -Distro Ubuntu
-    if ($ubuntuNext.Name -eq 'Ubuntu3' -and $pending.Name -eq 'Ubuntu3') {
+    $storedPending = @(Get-DistroShelfProfiles | Where-Object { [string]$_.Status -eq 'Pending' -and [string]$_.Distro -eq 'Ubuntu' })
+    $next = Get-NextDistroShelfProfileNumber -Distro Ubuntu
+    if ($pending.Name -eq 'Ubuntu3' -and $storedPending.Count -eq 0 -and $next -eq 3) {
         Write-Host 'PASS  pending previews do not change next committed profile number'
     } else {
-        Write-Host "FAIL  pending preview numbering: pending=$($pending.Name), next=$($ubuntuNext.Name)"; $failed++
+        Write-Host "FAIL  pending preview numbering: preview=$($pending.Name), storedPending=$($storedPending.Count), next=$next"; $failed++
     }
 
     if ($debian1.Name -eq 'Debian1' -and $debian1.Status -eq 'Ready' -and $debian2.Name -eq 'Debian2' -and $debian2.Status -eq 'Pending' -and $debian1.WslName -ne $debian2.WslName) {
