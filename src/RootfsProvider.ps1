@@ -57,8 +57,9 @@ function Expand-DistroShelfDebianStorePackage {
     New-Item -ItemType Directory -Path $outer,$inner -Force | Out-Null
     try {
         [System.IO.Compression.ZipFile]::ExtractToDirectory($PackagePath,$outer)
-        $appx=Get-ChildItem $outer -Recurse -Filter '*.appx' -File | Select-Object -First 1
-        if(!$appx){throw 'The Debian AppxBundle did not contain an x64 Appx package.'}
+        $appx=Get-ChildItem $outer -Recurse -Filter '*.appx' -File | Where-Object { $_.Name -match '(x64|amd64)' } | Select-Object -First 1
+        if(!$appx){$appx=Get-ChildItem $outer -Recurse -Filter '*.appx' -File | Select-Object -First 1}
+        if(!$appx){throw 'The Debian AppxBundle did not contain an Appx package.'}
         [System.IO.Compression.ZipFile]::ExtractToDirectory($appx.FullName,$inner)
         $tar=Get-ChildItem $inner -Recurse -File | Where-Object{$_.Name -match '^(install|rootfs).*\.tar(\.gz|\.xz|\.zst)?$'} | Select-Object -First 1
         if(!$tar){throw 'The Debian Appx package did not contain a WSL root filesystem archive.'}
@@ -75,13 +76,16 @@ function Save-DistroShelfDebianFallbackRootfs {
     $work=Join-Path ([System.IO.Path]::GetTempPath()) ("DistroShelf-{0}-{1}" -f $Distro,(Get-Random))
     New-Item -ItemType Directory -Path $work -Force | Out-Null
     $package=Join-Path $work 'distro.appxbundle'
+    $fallbackDestination=[System.IO.Path]::ChangeExtension($TrackDestination,'.tar')
     try {
         Write-Host "The official WSL rootfs endpoint did not return a valid image. Acquiring the official Microsoft package instead..."
         Invoke-WebRequest -Uri $packageUrl -OutFile $package -UseBasicParsing -ErrorAction Stop
+        $packageLength=(Get-Item -LiteralPath $package).Length
+        if($packageLength -lt 1MB){throw "The official Debian package download was unexpectedly small ($packageLength bytes)."}
         $rootfs=Expand-DistroShelfDebianStorePackage -PackagePath $package -DestinationDirectory $work
-        Copy-Item -LiteralPath $rootfs -Destination $TrackDestination -Force
-        $hash=(Get-FileHash -LiteralPath $TrackDestination -Algorithm SHA256).Hash.ToLowerInvariant()
-        return [pscustomobject][ordered]@{Path=$TrackDestination;Sha256=$hash;Source='Microsoft WSL package'}
+        Copy-Item -LiteralPath $rootfs -Destination $fallbackDestination -Force
+        $hash=(Get-FileHash -LiteralPath $fallbackDestination -Algorithm SHA256).Hash.ToLowerInvariant()
+        return [pscustomobject][ordered]@{Path=$fallbackDestination;Sha256=$hash;Source='Microsoft WSL package'}
     } finally {
         Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
     }
@@ -95,7 +99,21 @@ function Save-DistroShelfRootfs {
     $fileName="{0}-{1}{2}" -f $provider.Name,$provider.Architecture,$extension
     $trackDestination=Join-Path (Get-DistroShelfTrackArtifactDirectory $Distro 'Distro') $fileName
 
-    # Existing Track 0 artifact: verify it and reuse it without downloading.
+    # Reuse the artifact recorded in Track 0, including a Debian fallback tar.
+    $manifest=Get-DistroShelfTrackManifest $Distro
+    if($manifest -and $manifest.Rootfs -and $manifest.Rootfs.File -and $manifest.Rootfs.Sha256){
+        $recordedPath=Join-Path (Get-DistroShelfTrackArtifactDirectory $Distro 'Distro') ([string]$manifest.Rootfs.File)
+        if(Test-Path -LiteralPath $recordedPath -PathType Leaf){
+            try {
+                $hash=(Get-FileHash -LiteralPath $recordedPath -Algorithm SHA256).Hash.ToLowerInvariant()
+                if($hash -eq ([string]$manifest.Rootfs.Sha256).ToLowerInvariant()){
+                    return [pscustomobject][ordered]@{Provider=$provider;Path=$recordedPath;Sha256=$hash;Verified=$true;Cached=$true}
+                }
+            } catch {}
+            Remove-Item -LiteralPath $recordedPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     if(Test-Path -LiteralPath $trackDestination -PathType Leaf){
         try {
             $hash=(Get-FileHash -LiteralPath $trackDestination -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -107,7 +125,6 @@ function Save-DistroShelfRootfs {
         Remove-Item -LiteralPath $trackDestination -Force -ErrorAction SilentlyContinue
     }
 
-    # Migrate a previously downloaded legacy cache artifact when its hash matches.
     $legacy=Get-DistroShelfLegacyRootfsPath $Distro
     if($legacy -and (Test-Path -LiteralPath $legacy -PathType Leaf)){
         try {
@@ -127,13 +144,11 @@ function Save-DistroShelfRootfs {
         Invoke-WebRequest -Uri $provider.Url -OutFile $partial -UseBasicParsing -ErrorAction Stop
         $actualHash=(Get-FileHash -LiteralPath $partial -Algorithm SHA256).Hash.ToLowerInvariant()
         if($actualHash -ne $provider.Sha256){
-            # Debian's current WSL manifest points at a Salsa CI artifact endpoint which can
-            # return a small HTML response even with HTTP 200. Do not accept that response;
-            # fall back to Debian's official Microsoft WSL package and extract its rootfs.
             if($Distro -eq 'Debian'){
                 Remove-Item -LiteralPath $partial -Force -ErrorAction SilentlyContinue
                 $fallback=Save-DistroShelfDebianFallbackRootfs -Distro $Distro -TrackDestination $trackDestination
-                Write-DistroShelfTrackManifest -Distro $Distro -RootfsFile ([System.IO.Path]::GetFileName($trackDestination)) -RootfsSha256 $fallback.Sha256
+                $fallbackFile=[System.IO.Path]::GetFileName($fallback.Path)
+                Write-DistroShelfTrackManifest -Distro $Distro -RootfsFile $fallbackFile -RootfsSha256 $fallback.Sha256
                 return [pscustomobject][ordered]@{Provider=$provider;Path=$fallback.Path;Sha256=$fallback.Sha256;Verified=$true;Cached=$false;Migrated=$false;Fallback=$true}
             }
             throw "SHA-256 verification failed for '$Distro'. Expected $($provider.Sha256), received $actualHash."
