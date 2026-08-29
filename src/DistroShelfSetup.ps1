@@ -7,7 +7,7 @@ $script:Root=Split-Path -Parent $MyInvocation.MyCommand.Path
 $script:SupportedWslDistros=@('Ubuntu','Debian','Fedora','Arch Linux','openSUSE')
 $script:SupportedDistroShelfTerminals=@('Alacritty','COSMIC Terminal','Deepin Terminal','Foot','GNOME Console','GNOME Terminal','Ghostty','Kitty','Konsole','Ptyxis','QTerminal')
 $script:SelectedDistro='Ubuntu';$script:SelectedProfileId=$null;$script:PendingProfile=$null
-function Get-WslDistros { try{return @((& wsl.exe --list -- quiet 2>$null)|%{($_ -replace "`0",'').Trim()}|?{$_})}catch{return @()} }
+function Get-WslDistros { try{return @((& wsl.exe --list --quiet 2>$null)|%{($_ -replace "`0",'').Trim()}|?{$_})}catch{return @()} }
 function Get-SelectedProfile { if($script:SelectedProfileId -eq '__NEW__'){return $script:PendingProfile};if(!$script:SelectedProfileId){return $null};return Get-DistroShelfProfileById -Id $script:SelectedProfileId }
 function Find-ProfileWslName([object]$p){if(!$p -or !$p.WslName){return $null};return @(Get-WslDistros|?{$_ -eq [string]$p.WslName})|Select-Object -First 1}
 function Invoke-WslCommand([string]$cmd){$p=Get-SelectedProfile;$n=Find-ProfileWslName $p;if(!$n){return $null};try{$o=& wsl.exe --distribution $n -- bash -lc $cmd 2>$null;if($LASTEXITCODE -eq 0){return ($o -join "`n").Trim()}}catch{};return $null}
