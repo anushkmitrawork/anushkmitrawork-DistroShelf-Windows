@@ -11,20 +11,22 @@ function Pass($m){Write-Host "PASS  $m"};function Fail($m){Write-Host "FAIL  $m"
 
 foreach($d in @('Ubuntu','Debian','Fedora','Arch Linux','openSUSE')){
     $def=Get-DistroShelfDistroDefinition $d
-    if($def.Track.Stages.Count -lt 1){Fail "no Track stages for $d"}
-    $ids=@($def.Track.Stages|ForEach-Object Id)
-    if(($ids|Select-Object -Unique).Count-ne$ids.Count){Fail "duplicate Track stage IDs for $d"}
-    Resolve-DistroShelfStageOrder @($def.Track.Stages)|Out-Null
-    Pass "Track graph valid: $d"
+    $stages=@($def.Stages)
+    if($stages.Count -lt 1){Fail "no stages for $d"}
+    $ids=@($stages|ForEach-Object Id)
+    if(($ids|Select-Object -Unique).Count-ne$ids.Count){Fail "duplicate stage IDs for $d"}
+    Test-DistroShelfDag -Stages $stages|Out-Null
+    Pass "Distro graph valid: $d"
 }
 
 $stages=@(
- [pscustomobject]@{Id='a';Requires=@();Acquire=@();ProfileInstall=@();Tests=@()}
- [pscustomobject]@{Id='b';Requires=@('a');Acquire=@();ProfileInstall=@();Tests=@()}
- [pscustomobject]@{Id='c';Requires=@('a');Acquire=@();ProfileInstall=@();Tests=@()}
- [pscustomobject]@{Id='d';Requires=@('b','c');Acquire=@();ProfileInstall=@();Tests=@()}
+ [pscustomobject]@{Id='a';Depends=@()}
+ [pscustomobject]@{Id='b';Depends=@('a')}
+ [pscustomobject]@{Id='c';Depends=@('a')}
+ [pscustomobject]@{Id='d';Depends=@('b','c')}
 )
-$order=@(Resolve-DistroShelfStageOrder $stages)
+$plan=@(Get-DistroShelfExecutionPlan ([pscustomobject]@{Stages=$stages}))
+$order=@($plan|ForEach-Object Id)
 if($order.IndexOf('a') -lt $order.IndexOf('b') -and $order.IndexOf('a') -lt $order.IndexOf('c') -and $order.IndexOf('b') -lt $order.IndexOf('d') -and $order.IndexOf('c') -lt $order.IndexOf('d')){Pass 'DAG ordering respects prerequisites'}else{Fail 'DAG ordering invalid'}
 
 $temp=Join-Path ([IO.Path]::GetTempPath()) ('DistroShelf-AtomicTest-'+[guid]::NewGuid());New-Item -ItemType Directory -Path $temp -Force|Out-Null
@@ -32,10 +34,13 @@ try{
   $f=Join-Path $temp 'artifact.txt';'hello'|Set-Content $f
   $h=Get-DistroShelfTreeHash $temp
   if([string]::IsNullOrWhiteSpace($h) -or $h.Length -ne 64){Fail 'tree hash was not SHA-256'}else{Pass 'deterministic tree hash produced'}
-  $record=Join-Path $temp 'metadata\stage.hash.json';Write-DistroShelfHashRecord -Path $record -Stage 'stage' -Hash $h -TestResult ([pscustomobject]@{Passed=$true})|Out-Null
-  if(Test-DistroShelfHashRecord -Path $record -Root $temp -Stage 'stage'){Pass 'hash record verifies'}else{Fail 'hash record did not verify'}
+  $meta=Join-Path $temp 'metadata';New-Item -ItemType Directory -Path $meta -Force|Out-Null
+  # Exclude the record itself from the hashed tree, otherwise verification is self-referential.
+  $h=Get-DistroShelfTreeHash $temp -ExcludeRelativePath @('metadata')
+  $record=Join-Path $meta 'stage.hash.json';Write-DistroShelfHashRecord -Path $record -Stage 'stage' -Hash $h -TestResult ([pscustomobject]@{Passed=$true})|Out-Null
+  if(Test-DistroShelfHashRecord -Path $record -Root $temp -Stage 'stage' -ExcludeRelativePath @('metadata')){Pass 'hash record verifies'}else{Fail 'hash record did not verify'}
   'tamper'|Set-Content $f
-  if(-not(Test-DistroShelfHashRecord -Path $record -Root $temp -Stage 'stage')){Pass 'tampering invalidates hash'}else{Fail 'tampering did not invalidate hash'}
+  if(-not(Test-DistroShelfHashRecord -Path $record -Root $temp -Stage 'stage' -ExcludeRelativePath @('metadata'))){Pass 'tampering invalidates hash'}else{Fail 'tampering did not invalidate hash'}
 }
 finally{Remove-Item $temp -Recurse -Force -ErrorAction SilentlyContinue}
 
