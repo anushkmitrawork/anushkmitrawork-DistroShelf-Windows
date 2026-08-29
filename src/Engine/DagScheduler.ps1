@@ -1,45 +1,46 @@
-# DistroShelf - dependency graph scheduler
-# Scheduling is derived from declared prerequisites and runtime locks.
+# DistroShelf - dependency DAG scheduler
 
-function Test-DistroShelfGraph {
+function Get-DistroShelfReadyStages {
+    param(
+        [Parameter(Mandatory)][object[]]$Stages,
+        [Parameter(Mandatory)][hashtable]$VerifiedHashes
+    )
+    $ready = @()
+    foreach ($stage in @($Stages)) {
+        if ($VerifiedHashes.ContainsKey([string]$stage.Id)) { continue }
+        $deps = @($stage.Depends)
+        if (@($deps | Where-Object { -not $VerifiedHashes.ContainsKey([string]$_) }).Count -eq 0) { $ready += $stage }
+    }
+    return $ready
+}
+
+function Test-DistroShelfDag {
     param([Parameter(Mandatory)][object[]]$Stages)
-    $ids=@($Stages|ForEach-Object {[string]$_.Id})
-    if(($ids|Select-Object -Unique).Count -ne $ids.Count){throw 'Duplicate stage IDs detected.'}
-    foreach($s in @($Stages)){foreach($r in @($s.Requires)){if($r -notin $ids){throw "Stage '$($s.Id)' requires unknown stage '$r'."}}}
+    $ids = @{}
+    foreach($s in $Stages){
+        $id=[string]$s.Id
+        if([string]::IsNullOrWhiteSpace($id)){throw 'Every stage requires an Id.'}
+        if($ids.ContainsKey($id)){throw "Duplicate stage Id: $id"}
+        $ids[$id]=$true
+    }
+    foreach($s in $Stages){ foreach($d in @($s.Depends)){if(-not $ids.ContainsKey([string]$d)){throw "Stage '$($s.Id)' depends on unknown stage '$d'."};if([string]$d -eq [string]$s.Id){throw "Stage '$($s.Id)' cannot depend on itself."}} }
     # Kahn cycle check
-    $remaining=@{};foreach($s in @($Stages)){$remaining[[string]$s.Id]=@($s.Requires).Count}
-    $queue=New-Object System.Collections.Generic.Queue[string];foreach($s in @($Stages)){if($remaining[[string]$s.Id]-eq 0){$queue.Enqueue([string]$s.Id)}}
-    $seen=0
-    while($queue.Count){$id=$queue.Dequeue();$seen++;foreach($s in @($Stages)){if($id -in @($s.Requires)){ $remaining[[string]$s.Id]--;if($remaining[[string]$s.Id]-eq 0){$queue.Enqueue([string]$s.Id)}}}}
-    if($seen -ne $ids.Count){throw 'Dependency graph contains a cycle.'}
+    $remaining=@{}; foreach($s in $Stages){$remaining[[string]$s.Id]=@($s.Depends).Count}
+    $queue=[System.Collections.Generic.Queue[string]]::new(); foreach($k in $remaining.Keys){if($remaining[$k]-eq 0){$queue.Enqueue($k)}}
+    $count=0
+    while($queue.Count){$n=$queue.Dequeue();$count++;foreach($s in $Stages){if(@($s.Depends)-contains $n){$remaining[[string]$s.Id]--;if($remaining[[string]$s.Id]-eq 0){$queue.Enqueue([string]$s.Id)}}}}
+    if($count-ne $Stages.Count){throw 'Distro dependency graph contains a cycle.'}
     return $true
 }
 
-function Get-DistroShelfEligibleStages {
-    param([Parameter(Mandatory)][object[]]$Stages,[Parameter(Mandatory)][hashtable]$Completed,[hashtable]$Running=@{},[hashtable]$Locks=@{})
-    $eligible=@()
-    foreach($s in @($Stages)){
-        $id=[string]$s.Id
-        if($Completed.ContainsKey($id) -or $Running.ContainsKey($id)){continue}
-        $ready=$true
-        foreach($r in @($s.Requires)){if(-not $Completed.ContainsKey([string]$r)){$ready=$false;break}}
-        if(!$ready){continue}
-        if($s.ExclusiveGroup -and $Locks.ContainsKey([string]$s.ExclusiveGroup)){continue}
-        $eligible+=$s
+function Get-DistroShelfExecutionPlan {
+    param([Parameter(Mandatory)][object]$Definition)
+    $stages=@($Definition.Stages); Test-DistroShelfDag -Stages $stages | Out-Null
+    $verified=@{}; $plan=@()
+    while($verified.Count -lt $stages.Count){
+        $ready=@(Get-DistroShelfReadyStages -Stages $stages -VerifiedHashes $verified)
+        if(!$ready.Count){throw 'DAG is blocked; required stage hashes are missing or the graph is cyclic.'}
+        foreach($s in $ready){$plan += ,([pscustomobject]@{Id=$s.Id;Depends=@($s.Depends);ParallelGroup=[string]$s.ParallelGroup;Kind=[string]$s.Kind});$verified[[string]$s.Id]=$true}
     }
-    return @($eligible)
-}
-
-function Invoke-DistroShelfGraphPlan {
-    param([Parameter(Mandatory)][object[]]$Stages,[scriptblock]$OnBatch)
-    Test-DistroShelfGraph -Stages $Stages | Out-Null
-    $completed=@{};$running=@{};$locks=@{};$batches=@()
-    while($completed.Count -lt @($Stages).Count){
-        $batch=@(Get-DistroShelfEligibleStages -Stages $Stages -Completed $completed -Running $running -Locks $locks)
-        if(!$batch.Count){if($running.Count){break};throw 'Dependency graph is blocked: no eligible stage remains.'}
-        $batches+=,@($batch)
-        foreach($s in $batch){$completed[[string]$s.Id]=$true}
-        if($OnBatch){& $OnBatch @($batch)}
-    }
-    return @($batches)
+    return $plan
 }
