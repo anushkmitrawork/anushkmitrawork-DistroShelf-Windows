@@ -1,19 +1,53 @@
-# DistroShelf for Windows - independent profile manager
-# A persisted profile represents a successfully verified WSL environment.
-# Installation attempts use an in-memory candidate and are not written here
-# until the complete environment has passed verification.
-$script:DistroShelfProfileRoot=Join-Path $env:LOCALAPPDATA 'DistroShelf';$script:DistroShelfProfileFile=Join-Path $script:DistroShelfProfileRoot 'profiles.json'
-$script:DistroShelfProfileDefinitions=@{'Ubuntu'=@{WslBaseName='Ubuntu';PackageManager='apt'};'Debian'=@{WslBaseName='Debian';PackageManager='apt'};'Fedora'=@{WslBaseName='Fedora';PackageManager='dnf'};'Arch Linux'=@{WslBaseName='Arch';PackageManager='pacman'};'openSUSE'=@{WslBaseName='openSUSE';PackageManager='zypper'}}
-function Initialize-DistroShelfProfileStore {if(!(Test-Path -LiteralPath $script:DistroShelfProfileRoot)){New-Item -ItemType Directory -Path $script:DistroShelfProfileRoot -Force|Out-Null};if(!(Test-Path -LiteralPath $script:DistroShelfProfileFile)){'[]'|Set-Content -LiteralPath $script:DistroShelfProfileFile -Encoding UTF8}}
-function Get-DistroShelfProfiles {Initialize-DistroShelfProfileStore;try{$raw=Get-Content -LiteralPath $script:DistroShelfProfileFile -Raw -ErrorAction Stop;if([string]::IsNullOrWhiteSpace($raw)){return @()};$p=$raw|ConvertFrom-Json;if($null-eq$p){return @()};return @($p)}catch{throw "DistroShelf profile store is invalid: $($_.Exception.Message)"}}
-function Save-DistroShelfProfiles {param([object[]]$Profiles) Initialize-DistroShelfProfileStore;@($Profiles)|ConvertTo-Json -Depth 10|Set-Content -LiteralPath $script:DistroShelfProfileFile -Encoding UTF8}
-function Get-DistroShelfProfileDefinition {param([Parameter(Mandatory)][string]$Distro) if(!$script:DistroShelfProfileDefinitions.ContainsKey($Distro)){throw "Unsupported WSL distro: $Distro"};return $script:DistroShelfProfileDefinitions[$Distro]}
-function Get-NextDistroShelfProfileNumber {param([Parameter(Mandatory)][string]$Distro) $definition=Get-DistroShelfProfileDefinition $Distro;$prefix="DistroShelf-$($definition.WslBaseName)";$highest=0;foreach($profile in Get-DistroShelfProfiles){if([string]$profile.Status-ne'Ready'){continue};if($profile.WslName-match"^$([regex]::Escape($prefix))([0-9]+)$"){$n=[int]$Matches[1];if($n-gt$highest){$highest=$n}}};return $highest+1}
-function New-DistroShelfProfileCandidate {param([Parameter(Mandatory)][ValidateSet('Ubuntu','Debian','Fedora','Arch Linux','openSUSE')][string]$Distro) $definition=Get-DistroShelfProfileDefinition $Distro;$number=Get-NextDistroShelfProfileNumber $Distro;$wslName="DistroShelf-$($definition.WslBaseName)$number";return [pscustomobject][ordered]@{Id=[guid]::NewGuid().ToString();Name="$($definition.WslBaseName)$number";Distro=$Distro;WslName=$wslName;PackageManager=$definition.PackageManager;Status='Pending';CreatedAt=[DateTime]::UtcNow.ToString('o');Dependencies=[ordered]@{Wsl2=$true;Podman=$true;Distrobox=$true;Flatpak=$true;Flathub=$true;DistroShelf=$true}}}
-function Commit-DistroShelfProfile {param([Parameter(Mandatory)][pscustomobject]$Candidate,[string]$Terminal='GNOME Console') $profiles=@(Get-DistroShelfProfiles);$readyCollision=@($profiles|?{[string]$_.Status-eq'Ready' -and [string]$_.WslName-eq$Candidate.WslName});if($readyCollision.Count){throw "Profile name collision detected: $($Candidate.WslName)"};$profiles=@($profiles|?{[string]$_.WslName-ne$Candidate.WslName});$Candidate.Status='Ready';$Candidate|Add-Member -NotePropertyName Terminal -NotePropertyValue $Terminal -Force;$profiles += $Candidate;Save-DistroShelfProfiles $profiles;return Get-DistroShelfProfileById -Id $Candidate.Id}
-function New-DistroShelfProfile {param([Parameter(Mandatory)][ValidateSet('Ubuntu','Debian','Fedora','Arch Linux','openSUSE')][string]$Distro) $p=New-DistroShelfProfileCandidate $Distro;return Commit-DistroShelfProfile -Candidate $p}
-function Get-DistroShelfProfileById {param([Parameter(Mandatory)][string]$Id) foreach($p in Get-DistroShelfProfiles){if([string]$p.Id-eq$Id){return $p}};return $null}
-function Set-DistroShelfProfileStatus {param([Parameter(Mandatory)][string]$Id,[Parameter(Mandatory)][string]$Status) $profiles=@(Get-DistroShelfProfiles);$found=$false;foreach($p in $profiles){if([string]$p.Id-eq$Id){$p.Status=$Status;$found=$true;break}};if(!$found){throw "Profile not found: $Id"};Save-DistroShelfProfiles $profiles;return Get-DistroShelfProfileById -Id $Id}
-function Set-DistroShelfProfileTerminal {param([Parameter(Mandatory)][string]$Id,[Parameter(Mandatory)][string]$Terminal) $profiles=@(Get-DistroShelfProfiles);$found=$false;foreach($p in $profiles){if([string]$p.Id-eq$Id){$p|Add-Member -NotePropertyName Terminal -NotePropertyValue $Terminal -Force;$found=$true;break}};if(!$found){throw "Profile not found: $Id"};Save-DistroShelfProfiles $profiles;return Get-DistroShelfProfileById -Id $Id}
-function Remove-DistroShelfProfileRecord {param([Parameter(Mandatory)][string]$Id) $profiles=@(Get-DistroShelfProfiles);$remaining=@($profiles|?{$_.Id-ne$Id});if($remaining.Count-eq$profiles.Count){throw "Profile not found: $Id"};Save-DistroShelfProfiles $remaining}
-function Get-DistroShelfPackageManager {param([Parameter(Mandatory)][string]$Distro) return (Get-DistroShelfProfileDefinition $Distro).PackageManager}
+# DistroShelf - committed Profile registry
+# Profiles are persistent only after a successful end-to-end acceptance test.
+
+$script:DistroShelfProfileRoot = Join-Path $env:LOCALAPPDATA 'DistroShelf'
+$script:DistroShelfProfileFile = Join-Path $script:DistroShelfProfileRoot 'profiles.json'
+$script:DistroShelfProfileLock = Join-Path $script:DistroShelfProfileRoot 'profiles.lock'
+
+$script:DistroShelfProfileDefinitions = @{
+    'Ubuntu'      = @{ WslBaseName='Ubuntu'; PackageManager='apt' }
+    'Debian'      = @{ WslBaseName='Debian'; PackageManager='apt' }
+    'Fedora'      = @{ WslBaseName='Fedora'; PackageManager='dnf' }
+    'Arch Linux'  = @{ WslBaseName='Arch'; PackageManager='pacman' }
+    'openSUSE'    = @{ WslBaseName='openSUSE'; PackageManager='zypper' }
+}
+
+function Initialize-DistroShelfProfileStore {
+    if (!(Test-Path -LiteralPath $script:DistroShelfProfileRoot)) { New-Item -ItemType Directory -Path $script:DistroShelfProfileRoot -Force | Out-Null }
+    if (!(Test-Path -LiteralPath $script:DistroShelfProfileFile)) { '[]' | Set-Content -LiteralPath $script:DistroShelfProfileFile -Encoding UTF8 }
+}
+
+function Get-DistroShelfProfiles {
+    Initialize-DistroShelfProfileStore
+    $raw=Get-Content -LiteralPath $script:DistroShelfProfileFile -Raw -ErrorAction Stop
+    if([string]::IsNullOrWhiteSpace($raw)){return @()}
+    $v=$raw|ConvertFrom-Json
+    return @($v)
+}
+function Save-DistroShelfProfiles {
+    param([object[]]$Profiles)
+    Initialize-DistroShelfProfileStore
+    $tmp="$($script:DistroShelfProfileFile).tmp"
+    @($Profiles)|ConvertTo-Json -Depth 12|Set-Content -LiteralPath $tmp -Encoding UTF8
+    Move-Item -LiteralPath $tmp -Destination $script:DistroShelfProfileFile -Force
+}
+function Get-DistroShelfProfileDefinition { param([Parameter(Mandatory)][string]$Distro) if(!$script:DistroShelfProfileDefinitions.ContainsKey($Distro)){throw "Unsupported WSL distro: $Distro"};$script:DistroShelfProfileDefinitions[$Distro] }
+function Get-DistroShelfNextCommittedProfileNumber { param([Parameter(Mandatory)][string]$Distro)
+    $def=Get-DistroShelfProfileDefinition $Distro;$prefix="DistroShelf-$($def.WslBaseName)";$n=0
+    foreach($p in Get-DistroShelfProfiles){if([string]$p.Status -ne 'Ready'){continue};if([string]$p.WslName -match "^$([regex]::Escape($prefix))([0-9]+)$"){$x=[int]$Matches[1];if($x -gt $n){$n=$x}}};$n+1
+}
+function New-DistroShelfProfileCandidate { param([Parameter(Mandatory)][ValidateSet('Ubuntu','Debian','Fedora','Arch Linux','openSUSE')][string]$Distro)
+    $d=Get-DistroShelfProfileDefinition $Distro;$num=Get-DistroShelfNextCommittedProfileNumber $Distro
+    [pscustomobject][ordered]@{Id=[guid]::NewGuid().ToString();Name="$($d.WslBaseName)$num";Distro=$Distro;WslName="DistroShelf-$($d.WslBaseName)$num";PackageManager=$d.PackageManager;Status='Candidate';CreatedAt=[DateTime]::UtcNow.ToString('o');Dependencies=[ordered]@{Wsl2=$false;Podman=$false;Distrobox=$false;Flatpak=$false;Flathub=$false;DistroShelf=$false}}
+}
+function Commit-DistroShelfProfile {
+    param([Parameter(Mandatory)][pscustomobject]$Candidate,[string]$Terminal='GNOME Console',[Parameter(Mandatory)][string]$ProfileHash)
+    Initialize-DistroShelfProfileStore
+    $profiles=@(Get-DistroShelfProfiles)
+    if(@($profiles|?{[string]$_.WslName -eq [string]$Candidate.WslName -and [string]$_.Status -eq 'Ready'}).Count){throw "Committed profile already exists: $($Candidate.WslName)"}
+    $record=[ordered]@{Id=$Candidate.Id;Name=$Candidate.Name;Distro=$Candidate.Distro;WslName=$Candidate.WslName;PackageManager=$Candidate.PackageManager;Status='Ready';CreatedAt=$Candidate.CreatedAt;CommittedAt=[DateTime]::UtcNow.ToString('o');Terminal=$Terminal;ProfileHash=$ProfileHash;Dependencies=$Candidate.Dependencies}
+    $profiles+=[pscustomobject]$record;Save-DistroShelfProfiles $profiles;return [pscustomobject]$record
+}
+function Get-DistroShelfProfileById {param([Parameter(Mandatory)][string]$Id) return @(Get-DistroShelfProfiles|?{$_.Id -eq $Id})|Select-Object -First 1}
+function Test-DistroShelfProfileNameAvailable {param([Parameter(Mandatory)][string]$WslName)return (@(Get-DistroShelfProfiles|?{[string]$_.Status -eq 'Ready'}|?{$_.WslName -eq $WslName}).Count -eq 0)}
