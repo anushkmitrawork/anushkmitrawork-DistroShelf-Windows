@@ -41,6 +41,52 @@ function Get-DistroShelfLegacyRootfsPath {
     }
 }
 
+function Get-DistroShelfStorePackageUrl {
+    param([Parameter(Mandatory)][string]$Distro)
+    $manifest=Get-DistroShelfRootfsManifest
+    $entry=@($manifest.Distributions)|Where-Object{$_.Name -eq $Distro -and $_.Amd64PackageUrl}|Select-Object -First 1
+    if($entry){return [string]$entry.Amd64PackageUrl}
+    return $null
+}
+
+function Expand-DistroShelfDebianStorePackage {
+    param([Parameter(Mandatory)][string]$PackagePath,[Parameter(Mandatory)][string]$DestinationDirectory)
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $outer=Join-Path $DestinationDirectory 'bundle'
+    $inner=Join-Path $DestinationDirectory 'appx'
+    New-Item -ItemType Directory -Path $outer,$inner -Force | Out-Null
+    try {
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($PackagePath,$outer)
+        $appx=Get-ChildItem $outer -Recurse -Filter '*.appx' -File | Select-Object -First 1
+        if(!$appx){throw 'The Debian AppxBundle did not contain an x64 Appx package.'}
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($appx.FullName,$inner)
+        $tar=Get-ChildItem $inner -Recurse -File | Where-Object{$_.Name -match '^(install|rootfs).*\.tar(\.gz|\.xz|\.zst)?$'} | Select-Object -First 1
+        if(!$tar){throw 'The Debian Appx package did not contain a WSL root filesystem archive.'}
+        return $tar.FullName
+    } catch {
+        throw "Unable to extract the official Debian WSL package. $($_.Exception.Message)"
+    }
+}
+
+function Save-DistroShelfDebianFallbackRootfs {
+    param([Parameter(Mandatory)][string]$Distro,[Parameter(Mandatory)][string]$TrackDestination)
+    $packageUrl=Get-DistroShelfStorePackageUrl $Distro
+    if(!$packageUrl){throw "No official Microsoft package URL is available for '$Distro'."}
+    $work=Join-Path ([System.IO.Path]::GetTempPath()) ("DistroShelf-{0}-{1}" -f $Distro,(Get-Random))
+    New-Item -ItemType Directory -Path $work -Force | Out-Null
+    $package=Join-Path $work 'distro.appxbundle'
+    try {
+        Write-Host "The official WSL rootfs endpoint did not return a valid image. Acquiring the official Microsoft package instead..."
+        Invoke-WebRequest -Uri $packageUrl -OutFile $package -UseBasicParsing -ErrorAction Stop
+        $rootfs=Expand-DistroShelfDebianStorePackage -PackagePath $package -DestinationDirectory $work
+        Copy-Item -LiteralPath $rootfs -Destination $TrackDestination -Force
+        $hash=(Get-FileHash -LiteralPath $TrackDestination -Algorithm SHA256).Hash.ToLowerInvariant()
+        return [pscustomobject][ordered]@{Path=$TrackDestination;Sha256=$hash;Source='Microsoft WSL package'}
+    } finally {
+        Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Save-DistroShelfRootfs {
     param([Parameter(Mandatory)][string]$Distro,[string]$DestinationDirectory)
     $provider=Get-DistroShelfRootfsProvider $Distro
@@ -80,7 +126,18 @@ function Save-DistroShelfRootfs {
     try {
         Invoke-WebRequest -Uri $provider.Url -OutFile $partial -UseBasicParsing -ErrorAction Stop
         $actualHash=(Get-FileHash -LiteralPath $partial -Algorithm SHA256).Hash.ToLowerInvariant()
-        if($actualHash -ne $provider.Sha256){throw "SHA-256 verification failed for '$Distro'. Expected $($provider.Sha256), received $actualHash."}
+        if($actualHash -ne $provider.Sha256){
+            # Debian's current WSL manifest points at a Salsa CI artifact endpoint which can
+            # return a small HTML response even with HTTP 200. Do not accept that response;
+            # fall back to Debian's official Microsoft WSL package and extract its rootfs.
+            if($Distro -eq 'Debian'){
+                Remove-Item -LiteralPath $partial -Force -ErrorAction SilentlyContinue
+                $fallback=Save-DistroShelfDebianFallbackRootfs -Distro $Distro -TrackDestination $trackDestination
+                Write-DistroShelfTrackManifest -Distro $Distro -RootfsFile ([System.IO.Path]::GetFileName($trackDestination)) -RootfsSha256 $fallback.Sha256
+                return [pscustomobject][ordered]@{Provider=$provider;Path=$fallback.Path;Sha256=$fallback.Sha256;Verified=$true;Cached=$false;Migrated=$false;Fallback=$true}
+            }
+            throw "SHA-256 verification failed for '$Distro'. Expected $($provider.Sha256), received $actualHash."
+        }
         Move-Item -LiteralPath $partial -Destination $trackDestination -Force
     } catch {
         Remove-Item -LiteralPath $partial -Force -ErrorAction SilentlyContinue
