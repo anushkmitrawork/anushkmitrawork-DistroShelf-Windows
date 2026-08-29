@@ -76,16 +76,18 @@ function Save-DistroShelfDebianFallbackRootfs {
     $work=Join-Path ([System.IO.Path]::GetTempPath()) ("DistroShelf-{0}-{1}" -f $Distro,(Get-Random))
     New-Item -ItemType Directory -Path $work -Force | Out-Null
     $package=Join-Path $work 'distro.appxbundle'
-    $fallbackDestination=[System.IO.Path]::ChangeExtension($TrackDestination,'.tar')
     try {
         Write-Host "The official WSL rootfs endpoint did not return a valid image. Acquiring the official Microsoft package instead..."
         Invoke-WebRequest -Uri $packageUrl -OutFile $package -UseBasicParsing -ErrorAction Stop
         $packageLength=(Get-Item -LiteralPath $package).Length
         if($packageLength -lt 1MB){throw "The official Debian package download was unexpectedly small ($packageLength bytes)."}
         $rootfs=Expand-DistroShelfDebianStorePackage -PackagePath $package -DestinationDirectory $work
+        $rootfsName=$rootfs | Split-Path -Leaf
+        $fallbackName=if($rootfsName -match '\.tar\.gz$'){"{0}-amd64.tar.gz" -f $Distro}else{"{0}-amd64.tar" -f $Distro}
+        $fallbackDestination=Join-Path (Split-Path -Parent $TrackDestination) $fallbackName
         Copy-Item -LiteralPath $rootfs -Destination $fallbackDestination -Force
         $hash=(Get-FileHash -LiteralPath $fallbackDestination -Algorithm SHA256).Hash.ToLowerInvariant()
-        return [pscustomobject][ordered]@{Path=$fallbackDestination;Sha256=$hash;Source='Microsoft WSL package'}
+        return [pscustomobject][ordered]@{Path=$fallbackDestination;Sha256=$hash;Source='Microsoft WSL package';ArchiveType=$fallbackDestination.Substring($fallbackDestination.LastIndexOf('.')+1)}
     } finally {
         Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
     }
@@ -99,7 +101,6 @@ function Save-DistroShelfRootfs {
     $fileName="{0}-{1}{2}" -f $provider.Name,$provider.Architecture,$extension
     $trackDestination=Join-Path (Get-DistroShelfTrackArtifactDirectory $Distro 'Distro') $fileName
 
-    # Reuse the artifact recorded in Track 0, including a Debian fallback tar.
     $manifest=Get-DistroShelfTrackManifest $Distro
     if($manifest -and $manifest.Rootfs -and $manifest.Rootfs.File -and $manifest.Rootfs.Sha256){
         $recordedPath=Join-Path (Get-DistroShelfTrackArtifactDirectory $Distro 'Distro') ([string]$manifest.Rootfs.File)
