@@ -40,7 +40,8 @@ function Install-DistroShelfProfileStageFromTrack {
         'wsl-path' {
             if([string]$Stage.Id -eq 'flathub'){
                 $repo=Join-Path $root 'flathub.flatpakrepo';if(-not(Test-Path $repo -PathType Leaf)){$repo=Get-ChildItem $root -Recurse -File -Filter '*.flatpakrepo'|Select-Object -First 1|ForEach-Object FullName};if(-not$repo){throw "Track Flathub stage contains no .flatpakrepo artifact."}
-                return Invoke-DistroShelfCommand -WslName $WslName -Command 'flatpak remote-add --if-not-exists flathub /track-stage/flathub.flatpakrepo' -CaptureOutput
+                $repoPath="/track-stage/$stageId/$(Split-Path -Leaf $repo)"
+                return Invoke-DistroShelfCommand -WslName $WslName -Command "flatpak remote-add --if-not-exists flathub '$repoPath'" -CaptureOutput
             }
             throw "No local installer is defined for wsl-path stage '$($Stage.Id)'."
         }
