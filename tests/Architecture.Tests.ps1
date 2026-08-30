@@ -15,24 +15,24 @@ $requiredTerminals=@('GNOME Console','Kitty','Alacritty','Foot','Konsole')
 foreach($d in @('Ubuntu','Debian','Fedora','Arch Linux','openSUSE')){
     $provider=Get-DistroShelfProvider $d
     $stages=@($provider.Stages)
-    if($stages.Count -lt 1){Fail "no stages for $d"}
+    if($stages.Count -lt 1){Fail "no stages for ${d}"}
     $ids=@($stages|ForEach-Object Id)
-    if(($ids|Select-Object -Unique).Count-ne$ids.Count){Fail "duplicate stage IDs for $d"}
+    if(($ids|Select-Object -Unique).Count-ne$ids.Count){Fail "duplicate stage IDs for ${d}"}
     Test-DistroShelfDag -Stages $stages|Out-Null
     $validation=@(Invoke-DistroShelfDefinitionValidation|Where-Object Distro -eq $d|Where-Object{-not $_.Valid})
-    if($validation.Count){Fail "definition validation: $d"}
+    if($validation.Count){Fail "definition validation: ${d}"}
     foreach($s in @($stages|Where-Object Id -ne 'rootfs')){Test-DistroShelfProfileInstallCommands -Stage $s|Out-Null}
     $terminalStages=@($stages|Where-Object{[string]$_.Kind -eq 'terminal'})
     foreach($terminal in $requiredTerminals){
         $matches=@($terminalStages|Where-Object{[string]$_.TerminalName -eq $terminal})
-        if($matches.Count -ne 1){Fail "terminal matrix for $d: expected exactly one '$terminal' stage"}
+        if($matches.Count -ne 1){Fail "terminal matrix for ${d}: expected exactly one '$terminal' stage"}
         $stage=$matches[0]
-        if([string]::IsNullOrWhiteSpace([string]$stage.TerminalPackage)){Fail "terminal matrix for $d/$terminal: missing package"}
-        if([string]::IsNullOrWhiteSpace([string]$stage.TerminalExecutable)){Fail "terminal matrix for $d/$terminal: missing executable"}
-        if([string]$stage.ExecutionModel -ne 'SharedBuilder'){Fail "terminal matrix for $d/$terminal: unexpected execution model"}
+        if([string]::IsNullOrWhiteSpace([string]$stage.TerminalPackage)){Fail "terminal matrix for ${d}/$terminal: missing package"}
+        if([string]::IsNullOrWhiteSpace([string]$stage.TerminalExecutable)){Fail "terminal matrix for ${d}/$terminal: missing executable"}
+        if([string]$stage.ExecutionModel -ne 'SharedBuilder'){Fail "terminal matrix for ${d}/$terminal: unexpected execution model"}
     }
-    Pass "Distro provider valid and Profile commands are offline: $d"
-    Pass "Track contains complete terminal matrix: $d"
+    Pass "Distro provider valid and Profile commands are offline: ${d}"
+    Pass "Track contains complete terminal matrix: ${d}"
 }
 
 $stages=@(
