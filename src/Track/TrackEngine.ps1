@@ -14,12 +14,28 @@ function Export-DistroShelfTrackStageArtifact {
     param([Parameter(Mandatory)][string]$Distro,[Parameter(Mandatory)]$Stage,[Parameter(Mandatory)][string]$WslName,[Parameter(Mandatory)][string]$Destination)
     $type=[string]$Stage.Track.ExportType;$value=[string]$Stage.Track.ExportValue;$provider=Get-DistroShelfProvider -Distro $Distro;$manager=[string]$provider.PackageManager;$id=[string]$Stage.Id
     switch($type){
-        'apt-cache' { Export-DistroShelfAptCache -WslName $WslName -Destination $Destination -StageId $id|Out-Null }
-        'rpm-cache' { switch($manager){'dnf'{Export-DistroShelfDnfCache -WslName $WslName -Destination $Destination -StageId $id|Out-Null}' 'zypper'{Export-DistroShelfZypperCache -WslName $WslName -Destination $Destination -StageId $id|Out-Null} default{throw "RPM exporter unavailable for '$manager'."}} }
-        'pacman-cache' { Export-DistroShelfPacmanCache -WslName $WslName -Destination $Destination -StageId $id|Out-Null }
-        'wsl-path' { Export-DistroShelfWslPath -WslName $WslName -WslPath $value -Destination $Destination|Out-Null }
-        'flatpak-sideload' { Export-DistroShelfFlatpakSideload -WslName $WslName -AppId $value -Destination $Destination|Out-Null }
-        default { throw "No Track artifact exporter declared for stage '$id' on '$Distro'." }
+        'apt-cache' {
+            Export-DistroShelfAptCache -WslName $WslName -Destination $Destination -StageId $id|Out-Null
+        }
+        'rpm-cache' {
+            switch($manager){
+                'dnf' { Export-DistroShelfDnfCache -WslName $WslName -Destination $Destination -StageId $id|Out-Null }
+                'zypper' { Export-DistroShelfZypperCache -WslName $WslName -Destination $Destination -StageId $id|Out-Null }
+                default { throw "RPM exporter unavailable for '$manager'." }
+            }
+        }
+        'pacman-cache' {
+            Export-DistroShelfPacmanCache -WslName $WslName -Destination $Destination -StageId $id|Out-Null
+        }
+        'wsl-path' {
+            Export-DistroShelfWslPath -WslName $WslName -WslPath $value -Destination $Destination|Out-Null
+        }
+        'flatpak-sideload' {
+            Export-DistroShelfFlatpakSideload -WslName $WslName -AppId $value -Destination $Destination|Out-Null
+        }
+        default {
+            throw "No Track artifact exporter declared for stage '$id' on '$Distro'."
+        }
     }
     if(@(Get-ChildItem -LiteralPath $Destination -Recurse -File -ErrorAction SilentlyContinue).Count -eq 0){throw "Track stage '$id' produced no reusable artifacts."}
 }
