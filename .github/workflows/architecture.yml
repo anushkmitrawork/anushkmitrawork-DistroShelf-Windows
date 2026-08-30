@@ -22,6 +22,9 @@ jobs:
       - name: Run Track two-level verification contract tests
         shell: pwsh
         run: ./tests/TrackVerification.Tests.ps1
+      - name: Run as-is commit boundary tests
+        shell: pwsh
+        run: ./tests/AtomicAsIsCommit.Tests.ps1
       - name: Run current Profile registry tests
         shell: pwsh
         run: ./tests/DistroShelf.Tests.ps1
