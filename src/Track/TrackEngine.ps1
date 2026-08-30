@@ -75,7 +75,7 @@ function Invoke-DistroShelfTrackBuilder {
             $batch=@(Select-DistroShelfParallelBatch -ReadyStages $ready -MaxConcurrency $MaxConcurrency)
             if(!$batch.Count){throw 'Track scheduler selected an empty batch.'}
             $batchNumber++;$label=($batch|ForEach-Object{[string]$_.Id}) -join ', '
-            if($OnProgress){&$OnProgress ([Math]::Min(82,(20+($batchNumber*8)))) "Executing verified batch $batchNumber: $label"}
+            if($OnProgress){&$OnProgress ([Math]::Min(82,(20+($batchNumber*8))) ) "Executing verified batch ${batchNumber}: $label"}
             foreach($stage in @($batch)){
                 if([string]$stage.ExecutionModel -eq 'IsolatedBuilder'){
                     throw "Stage '$($stage.Id)' declares IsolatedBuilder, but Track builder isolation is not configured."
@@ -129,8 +129,9 @@ function Commit-DistroShelfTrackTransaction {
     if(Test-Path -LiteralPath $target){throw "Refusing to overwrite existing Track: $target"}
     try {
         & $Promote $BuildResult.TrackRoot $target
-        if(-not (& $IntegrityCheck $BuildResult.Transaction.Distro)){
-            throw "Track integrity verification failed after promotion: $target"
+        $committedHash=& $TreeHash $target
+        if([string]$committedHash -ne [string]$BuildResult.FinalHash.ToLowerInvariant()){
+            throw "Track integrity hash changed during promotion: $target"
         }
         [pscustomobject][ordered]@{Success=$true;Distro=$BuildResult.Transaction.Distro;Track=(Split-Path -Leaf $target);Root=$target;FinalHash=$BuildResult.FinalHash}
     } catch {
