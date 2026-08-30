@@ -36,3 +36,5 @@ jobs:
         env:
           DISTROSHELF_RUN_LIVE_TESTS: '1'
         run: ./tests/UbuntuLive.Tests.ps1
+
+# [live] one-shot integration gate; subsequent normal pushes skip ubuntu-live.
