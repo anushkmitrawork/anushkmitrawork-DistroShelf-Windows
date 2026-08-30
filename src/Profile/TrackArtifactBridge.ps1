@@ -8,7 +8,7 @@ function Mount-DistroShelfTrackStageIntoProfile {
     )
     $source=Join-Path $TrackRoot ($StageId -replace ':','-')
     if(-not(Test-Path -LiteralPath $source -PathType Container)){throw "Verified Track stage '$StageId' is missing from '$TrackRoot'."}
-    $destination="/track/$($StageId -replace ':','-')"
+    $destination="/track-stage/$($StageId -replace ':','-')"
     Invoke-DistroShelfCommand -WslName $WslName -Command "rm -rf '$destination'; mkdir -p '$destination'"|Out-Null
     $share="\\wsl$\$WslName$destination"
     if(-not(Test-Path -LiteralPath $share -PathType Container)){throw "Unable to create Profile Track bridge for stage '$StageId'."}
