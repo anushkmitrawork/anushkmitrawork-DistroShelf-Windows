@@ -12,7 +12,11 @@ function Commit-DistroShelfProfileTransaction {
 
     $candidate=$BuildResult.Candidate
     $transactionRoot=$BuildResult.Transaction.Root
-    $export=[string]$BuildResult.ExportPath
+    $export=[IO.Path]::GetFullPath([string]$BuildResult.ExportPath)
+    $transactionFull=[IO.Path]::GetFullPath([string]$transactionRoot)
+    if(-not $export.StartsWith($transactionFull.TrimEnd('\') + '\',[StringComparison]::OrdinalIgnoreCase)){
+        throw 'Accepted Profile export must reside inside the transaction root.'
+    }
     $wslName=[string]$candidate.WslName
     $profilesRoot=Join-Path $env:LOCALAPPDATA 'DistroShelf\profiles'
     $finalRoot=Join-Path $profilesRoot ([string]$candidate.Name)
@@ -33,17 +37,24 @@ function Commit-DistroShelfProfileTransaction {
     Save-Journal
 
     try {
-        # ProfileEngine has already exported the accepted WSL environment exactly once.
-        # Re-exporting here would create a different artifact and weaken the identity
-        # guarantee between testing, hashing, and commit.
+        # ProfileEngine already exported the accepted WSL environment exactly once.
+        # Commit consumes that artifact and is forbidden from calling wsl --export again.
         $artifactHash=(Get-FileHash -LiteralPath $export -Algorithm SHA256).Hash.ToLowerInvariant()
         if($artifactHash -ne [string]$BuildResult.ProfileHash.ToLowerInvariant()){
             throw "Accepted Profile artifact hash does not match ProfileHash for '$wslName'."
         }
         $journal.ExportedVhdxSha256=$artifactHash;Save-Journal
+        $journal.State='ExportVerified';Save-Journal
 
-        # The temporary WSL registration is no longer needed once its already-accepted
-        # export has been verified. The export remains the durable transaction artifact.
+        $payloadRecord=[ordered]@{
+            SchemaVersion=2;ProfileId=$candidate.Id;Name=$candidate.Name;Distro=$candidate.Distro;
+            WslName=$wslName;Algorithm='SHA256';Hash=$artifactHash;
+            Artifact=[IO.Path]::GetRelativePath($transactionRoot,$export);
+            RecordedAt=[DateTime]::UtcNow.ToString('o')
+        }
+        $payloadRecordPath=Join-Path $transactionRoot 'export.hash.json'
+        $payloadRecord|ConvertTo-Json -Depth 20|Set-Content -LiteralPath $payloadRecordPath -Encoding UTF8
+
         & wsl.exe --unregister $wslName 2>&1|Out-Null
         if($LASTEXITCODE-ne 0){throw "Failed to unregister temporary Profile '$wslName' during commit."}
         $journal.State='TemporaryUnregistered';Save-Journal
@@ -52,7 +63,7 @@ function Commit-DistroShelfProfileTransaction {
         $finalWsl=Join-Path $finalRoot 'wsl';New-Item -ItemType Directory -Path $finalWsl -Force|Out-Null
         $finalVhdx=Join-Path $finalWsl 'ext4.vhdx'
 
-        # Promotion uses the exact accepted artifact. No second export is permitted.
+        # Promote the exact accepted artifact. No second export is permitted.
         Move-Item -LiteralPath $export -Destination $finalVhdx -Force
         $journal.State='PayloadPromoted';Save-Journal
 
