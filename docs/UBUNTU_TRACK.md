@@ -28,9 +28,9 @@ A failed stage is never published into Track 0. The whole attempt is preserved u
 | Stage | Depends on | Track acquisition | Track verification | Profile consumption |
 |---|---|---|---|---|
 | rootfs | none | Official WSL AMD64 artifact | `/etc/os-release`, `uname -m`, `command -v apt-get`, `command -v dpkg` | verified rootfs import |
-| podman | rootfs | `apt-get update` + `apt-get --download-only` into stage cache | `podman --version`, `podman info --format json` | local `.deb` artifacts only |
-| distrobox | rootfs, podman | `apt-get --download-only` into stage cache | `distrobox --version`, `distrobox list` | local `.deb` artifacts only |
-| flatpak | rootfs | `apt-get --download-only` into stage cache | `flatpak --version`, `flatpak remotes --columns=name` | local `.deb` artifacts only |
+| podman | rootfs | `apt-get update` + `apt-get --download-only` into stage cache | `command -v podman`, `podman --version`, `podman info --format json` | local `.deb` artifacts only |
+| distrobox | rootfs, podman | `apt-get --download-only` into stage cache | `command -v distrobox`, `distrobox --version`, `distrobox list` | local `.deb` artifacts only |
+| flatpak | rootfs | `apt-get --download-only` into stage cache | `command -v flatpak`, `flatpak --version`, `flatpak remotes --columns=name` | local `.deb` artifacts only |
 | flathub | rootfs, flatpak | download `flathub.flatpakrepo` | Flathub remote is present | local `.flatpakrepo` only |
 | distroshelf | rootfs, distrobox, flatpak, flathub | install from Flathub, then create sideload repository | `flatpak info com.ranfdev.DistroShelf` | local sideload repository only |
 | terminal-gnome-console | rootfs | APT package closure | `command -v kgx`, `kgx --version` | selected `.deb` closure |
@@ -39,7 +39,7 @@ A failed stage is never published into Track 0. The whole attempt is preserved u
 | terminal-foot | rootfs | APT package closure | `command -v foot`, `foot --version` | selected `.deb` closure |
 | terminal-konsole | rootfs | APT package closure | `command -v konsole`, `konsole --version` | selected `.deb` closure |
 
-Ubuntu package availability is release-sensitive. The implementation resolves the installed rootfs's configured repositories at execution time and treats the resulting package closure as the Track artifact. Current Ubuntu package listings show Podman, Distrobox, GNOME Console (`kgx`), Kitty, Alacritty, Foot, and Konsole are available in supported Ubuntu suites; the live Track test remains the authority for the exact WSL rootfs selected by the official WSL manifest.
+Ubuntu package availability is release-sensitive. The implementation resolves the installed rootfs's configured repositories at execution time and treats the resulting package closure as the Track artifact. Current Ubuntu package listings show Podman and Distrobox in the Ubuntu archive, plus GNOME Console (`kgx`), Kitty, Alacritty, Foot, and Konsole in supported Ubuntu suites; the live Track test remains the authority for the exact WSL rootfs selected by the official WSL manifest. citeturn690053search0turn690053search7turn690053search3turn466967search1turn466967search8turn466967search5turn466967search3
 
 ## Hash rule
 
@@ -50,6 +50,10 @@ The final Track hash is SHA-256 over the complete Track tree excluding only the 
 ## Profile rule
 
 A Profile never re-downloads Track-managed dependencies. It verifies the committed Track, bridges the required stage artifacts into an isolated WSL environment, installs the user's selected terminal only, runs the complete Profile acceptance suite, exports the accepted environment exactly once, hashes that exact export, and commits that same artifact.
+
+## Verification levels
+
+Normal CI runs the non-destructive architecture, registry, Track-contract, and hash/transaction tests. The explicit Ubuntu live gate is the release-quality integration test because it performs the real WSL import, package download/install, stage verification, artifact creation, Track commit, Profile build, Profile export, and Profile commit.
 
 ## Live verification
 
