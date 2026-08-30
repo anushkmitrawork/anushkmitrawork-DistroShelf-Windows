@@ -7,7 +7,6 @@ function Pass($m){Write-Host "PASS  $m"};function Fail($m){Write-Host "FAIL  $m"
 . (Join-Path $src 'Engine\DagScheduler.ps1')
 . (Join-Path $src 'Engine\TestEngine.ps1')
 . (Join-Path $src 'Engine\DefinitionValidator.ps1')
-. (Join-Path $src 'Engine\WorkerExecutor.ps1')
 . (Join-Path $src 'Distro\Registry.ps1')
 . (Join-Path $src 'DistroTrackManager.ps1')
 . (Join-Path $src 'Profile\ProfileArtifactInstaller.ps1')
@@ -32,26 +31,39 @@ foreach($d in @('Ubuntu','Debian','Fedora','Arch Linux','openSUSE')){
         if([string]::IsNullOrWhiteSpace([string]$stage.TerminalExecutable)){Fail "terminal matrix for ${d}/$terminal`: missing executable"}
         if([string]$stage.ExecutionModel -ne 'SharedBuilder'){Fail "terminal matrix for ${d}/$terminal`: unexpected execution model"}
     }
-    Pass "Distro provider valid and Profile commands are offline: ${d}"
-    Pass "Track contains complete terminal matrix: ${d}"
+    $linear=@(Get-DistroShelfLinearExecutionPlan -Definition $provider)
+    if($linear.Count -ne $stages.Count){Fail "linear plan omitted stages for ${d}"}
+    for($i=0;$i-lt$linear.Count;$i++){
+        $prior=@($linear[0..$i]|ForEach-Object{[string]$_.Id})
+        foreach($dep in @($linear[$i].Depends)){if(-not($prior -contains [string]$dep)){Fail "linear plan violated dependency for ${d}/$($linear[$i].Id)"}}
+    }
+    Pass "Distro provider and deterministic linear DAG are valid: ${d}"
+    Pass "Profile commands remain implementation-only/offline: ${d}"
 }
 
-$stages=@(
+$linearStages=@(
  [pscustomobject]@{Id='a';Depends=@();ExecutionModel='SharedBuilder'}
  [pscustomobject]@{Id='b';Depends=@('a');ExecutionModel='SharedBuilder'}
  [pscustomobject]@{Id='c';Depends=@('a');ExecutionModel='SharedBuilder'}
  [pscustomobject]@{Id='d';Depends=@('b','c');ExecutionModel='SharedBuilder'}
 )
-$plan=@(Get-DistroShelfExecutionPlan ([pscustomobject]@{Stages=$stages}))
-$order=@($plan|ForEach-Object Id)
-if($order.IndexOf('a') -lt $order.IndexOf('b') -and $order.IndexOf('a') -lt $order.IndexOf('c') -and $order.IndexOf('b') -lt $order.IndexOf('d') -and $order.IndexOf('c') -lt $order.IndexOf('d')){Pass 'DAG ordering respects prerequisites'}else{Fail 'DAG ordering invalid'}
+$linearDefinition=[pscustomobject]@{Stages=$linearStages}
+$linearPlan=@(Get-DistroShelfLinearExecutionPlan -Definition $linearDefinition)
+$linearOrder=@($linearPlan|ForEach-Object Id)
+if(($linearOrder -join ',') -eq 'a,b,c,d'){Pass 'linear DAG execution is deterministic and dependency-safe'}else{Fail "unexpected linear DAG order: $($linearOrder -join ',')"}
 
-$isolatedA=[pscustomobject]@{Id='ia';Depends=@();ExecutionModel='IsolatedBuilder';ResourceLock='net-a'}
-$isolatedB=[pscustomobject]@{Id='ib';Depends=@();ExecutionModel='IsolatedBuilder';ResourceLock='net-b'}
-$shared=[pscustomobject]@{Id='shared';Depends=@();ExecutionModel='SharedBuilder';ResourceLock='builder'}
-$batch=@(Select-DistroShelfParallelBatch -ReadyStages @($isolatedA,$isolatedB) -MaxConcurrency 2)
-if($batch.Count -eq 2){Pass 'independent isolated stages may share a parallel batch'}else{Fail 'isolated stages were not parallel-batch eligible'}
-try {Invoke-DistroShelfWorkerBatch -Stages @($shared) -Worker {param($s);$s.Id}|Out-Null;Fail 'worker executor accepted shared-builder stage'}catch{Pass 'worker executor rejects shared-builder concurrency'}
+try {
+    Get-DistroShelfLinearExecutionPlan -Definition ([pscustomobject]@{Stages=@(
+        [pscustomobject]@{Id='a';Depends=@('b')}
+        [pscustomobject]@{Id='b';Depends=@('a')}
+    )})|Out-Null
+    Fail 'linear planner accepted a cyclic DAG'
+} catch {Pass 'linear planner rejects cyclic DAGs'}
+
+$trackEngineText=Get-Content -LiteralPath (Join-Path $src 'Track\TrackEngine.ps1') -Raw
+if($trackEngineText -match 'Get-DistroShelfLinearExecutionPlan'){Pass 'Track builder uses the linear DAG executor'}else{Fail 'Track builder is not bound to the linear DAG executor'}
+if($trackEngineText -notmatch 'MaxConcurrency'){Pass 'Track Core has no parallelism parameter'}else{Fail 'Track Core still exposes parallelism configuration'}
+if($trackEngineText -match 'foreach\(\$stage in \$linearOrder\)'){Pass 'Track stages execute one-at-a-time in planned order'}else{Fail 'Track Core does not execute the linear plan sequentially'}
 
 $temp=Join-Path ([IO.Path]::GetTempPath()) ('DistroShelf-AtomicTest-'+[guid]::NewGuid());New-Item -ItemType Directory -Path $temp -Force|Out-Null
 try{
@@ -81,9 +93,7 @@ try {
   Pass 'Track and Profile have separate transaction identities and attempt roots'
   Pass 'Track and Profile committed stores are distinct'
 }
-finally {
-  Remove-Item $tx.Root,$ptx.Root -Recurse -Force -ErrorAction SilentlyContinue
-}
+finally {Remove-Item $tx.Root,$ptx.Root -Recurse -Force -ErrorAction SilentlyContinue}
 
 $tx=New-DistroShelfTransaction -Kind Track -Distro Debian
 if(Test-Path $tx.Root){Pass 'transaction creates isolated attempt root'}else{Fail 'transaction root missing'}
