@@ -50,7 +50,7 @@ try {
     foreach($stageId in @('podman','flatpak')){
         $record=Get-Content (Join-Path $track "metadata\$stageId.hash.json") -Raw|ConvertFrom-Json
         if([string]$record.Algorithm -ne 'SHA256'){Fail "dependency '$stageId' does not record SHA-256"}
-        if(-not [bool]$record.TestResult.Passed){Fail "dependency '$stageId' hash record does not attest a passing verification"}
+        if(-not [bool]$record.Tests.Passed){Fail "dependency '$stageId' hash record does not attest a passing verification"}
     }
     Pass 'dependency hash records carry explicit SHA-256 and passing-test attestations'
 
