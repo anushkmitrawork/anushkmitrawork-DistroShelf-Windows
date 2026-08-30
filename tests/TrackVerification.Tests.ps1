@@ -26,7 +26,7 @@ if($acceptanceText -notmatch 'function Invoke-DistroShelfTrackAcceptance'){Fail 
 if($trackText -notmatch 'provider\.TrackFinalTests'){Fail 'Track builder does not consume provider final acceptance tests'}
 Pass 'Track has a distinct aggregate acceptance gate'
 
-if($trackText -notmatch "Stage='track'"){Fail 'Track final hash is not persisted as a Track hash record'}
+if($trackText -notmatch "-Stage 'track'"){Fail 'Track final hash is not persisted as a Track hash record'}
 if($managerText -notmatch 'FinalHash'){Fail 'Committed Track source-of-truth has no final hash'}
 if($managerText -notmatch 'Get-DistroShelfTreeHash'){Fail 'Committed Track integrity does not recompute the whole-Track hash'}
 Pass 'Committed Track integrity is bound to the final whole-Track hash'
