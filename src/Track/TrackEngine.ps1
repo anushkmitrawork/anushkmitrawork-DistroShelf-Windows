@@ -14,9 +14,7 @@ function Export-DistroShelfTrackStageArtifact {
     param([Parameter(Mandatory)][string]$Distro,[Parameter(Mandatory)]$Stage,[Parameter(Mandatory)][string]$WslName,[Parameter(Mandatory)][string]$Destination)
     $type=[string]$Stage.Track.ExportType;$value=[string]$Stage.Track.ExportValue;$provider=Get-DistroShelfProvider -Distro $Distro;$manager=[string]$provider.PackageManager;$id=[string]$Stage.Id
     switch($type){
-        'apt-cache' {
-            Export-DistroShelfAptCache -WslName $WslName -Destination $Destination -StageId $id|Out-Null
-        }
+        'apt-cache' { Export-DistroShelfAptCache -WslName $WslName -Destination $Destination -StageId $id|Out-Null }
         'rpm-cache' {
             switch($manager){
                 'dnf' { Export-DistroShelfDnfCache -WslName $WslName -Destination $Destination -StageId $id|Out-Null }
@@ -24,18 +22,10 @@ function Export-DistroShelfTrackStageArtifact {
                 default { throw "RPM exporter unavailable for '$manager'." }
             }
         }
-        'pacman-cache' {
-            Export-DistroShelfPacmanCache -WslName $WslName -Destination $Destination -StageId $id|Out-Null
-        }
-        'wsl-path' {
-            Export-DistroShelfWslPath -WslName $WslName -WslPath $value -Destination $Destination|Out-Null
-        }
-        'flatpak-sideload' {
-            Export-DistroShelfFlatpakSideload -WslName $WslName -AppId $value -Destination $Destination|Out-Null
-        }
-        default {
-            throw "No Track artifact exporter declared for stage '$id' on '$Distro'."
-        }
+        'pacman-cache' { Export-DistroShelfPacmanCache -WslName $WslName -Destination $Destination -StageId $id|Out-Null }
+        'wsl-path' { Export-DistroShelfWslPath -WslName $WslName -WslPath $value -Destination $Destination|Out-Null }
+        'flatpak-sideload' { Export-DistroShelfFlatpakSideload -WslName $WslName -AppId $value -Destination $Destination|Out-Null }
+        default { throw "No Track artifact exporter declared for stage '$id' on '$Distro'." }
     }
     if(@(Get-ChildItem -LiteralPath $Destination -Recurse -File -ErrorAction SilentlyContinue).Count -eq 0){throw "Track stage '$id' produced no reusable artifacts."}
 }
@@ -46,16 +36,14 @@ function Invoke-DistroShelfTrackStage {
     if($id -eq 'rootfs'){
         $testResult=Invoke-DistroShelfTrackAcceptance -WslName $BuilderName -Tests @($Stage.Track.Tests)
         if(-not $testResult.Passed){throw "Track stage '$id' failed verification."}
-        $hash=Get-DistroShelfTreeHash -Root $DistroRoot
-        $hashRoot=$DistroRoot
+        $hash=Get-DistroShelfTreeHash -Root $DistroRoot;$hashRoot=$DistroRoot
     } else {
         Invoke-DistroShelfCommands -WslName $BuilderName -Commands @($Stage.Track.Acquire)
         Invoke-DistroShelfCommands -WslName $BuilderName -Commands @($Stage.Track.Install)
         $testResult=Invoke-DistroShelfStageTests -WslName $BuilderName -Tests @($Stage.Track.Tests)
         if(-not $testResult.Passed){throw "Track stage '$id' failed verification."}
         Export-DistroShelfTrackStageArtifact -Distro $Distro -Stage $Stage -WslName $BuilderName -Destination $stageRoot
-        $hash=Get-DistroShelfTreeHash -Root $stageRoot
-        $hashRoot=$stageRoot
+        $hash=Get-DistroShelfTreeHash -Root $stageRoot;$hashRoot=$stageRoot
     }
     $hashRecordPath=Join-Path (Join-Path $TrackRoot 'metadata') "$($id -replace ':','-').hash.json"
     Write-DistroShelfHashRecord -Path $hashRecordPath -Stage $id -Hash $hash -TestResult $testResult|Out-Null
@@ -64,14 +52,14 @@ function Invoke-DistroShelfTrackStage {
 }
 
 function Invoke-DistroShelfTrackBuilder {
-    param([Parameter(Mandatory)][string]$Distro,[int]$MaxConcurrency=3,[scriptblock]$OnProgress)
+    param([Parameter(Mandatory)][string]$Distro,[scriptblock]$OnProgress)
     $provider=Get-DistroShelfProvider -Distro $Distro
     $stages=@($provider.Stages)
-    Test-DistroShelfDag -Stages $stages|Out-Null
+    $linearOrder=@(Get-DistroShelfLinearExecutionPlan -Definition $provider)
     $tx=New-DistroShelfTransaction -Kind Track -Distro $Distro
     $trackRoot=Join-Path $tx.Root 'Track';$distroRoot=Join-Path $trackRoot 'Distro'
     New-Item -ItemType Directory -Path $trackRoot,$distroRoot,(Join-Path $trackRoot 'metadata'),(Join-Path $trackRoot 'Terminals') -Force|Out-Null
-    Write-DistroShelfTransactionRecord -Transaction $tx -State 'Running' -Data @{Phase='TrackBuildStarted';Distro=$Distro;StageCount=$stages.Count}|Out-Null
+    Write-DistroShelfTransactionRecord -Transaction $tx -State 'Running' -Data @{Phase='TrackBuildStarted';Distro=$Distro;StageCount=$stages.Count;ExecutionMode='Linear'}|Out-Null
     $builderName=$null
     try {
         if($OnProgress){&$OnProgress 5 "Acquiring $Distro root filesystem..."}
@@ -84,25 +72,22 @@ function Invoke-DistroShelfTrackBuilder {
         $candidate=[pscustomobject]@{Id=$tx.Id;WslName=$builderName;Distro=$Distro;Name="$Distro-TrackBuilder"}
         Invoke-DistroShelfWslImport -Profile $candidate -RootfsPath $rootfs.Path -ExpectedSha256 $rootfs.Sha256 -StorageRoot (Join-Path $tx.Root 'Wsl')|Out-Null
 
-        $verified=@{};$remaining=@($stages);$stageResults=@();$batchNumber=0
-        while($remaining.Count){
-            $ready=@(Get-DistroShelfReadyStages -Stages $remaining -VerifiedHashes $verified -HashRoot $trackRoot)
-            if(!$ready.Count){throw 'Track DAG is blocked: no remaining stage has all required verified hashes.'}
-            $batch=@(Select-DistroShelfParallelBatch -ReadyStages $ready -MaxConcurrency $MaxConcurrency)
-            if(!$batch.Count){throw 'Track scheduler selected an empty batch.'}
-            $batchNumber++;$label=($batch|ForEach-Object{[string]$_.Id}) -join ', '
-            if($OnProgress){&$OnProgress ([Math]::Min(82,(20+($batchNumber*8))) ) "Executing verified batch ${batchNumber}: $label"}
-            foreach($stage in @($batch)){
-                if([string]$stage.ExecutionModel -eq 'IsolatedBuilder'){
-                    throw "Stage '$($stage.Id)' declares IsolatedBuilder, but Track builder isolation is not configured."
-                }
-                $result=Invoke-DistroShelfTrackStage -Distro $Distro -Stage $stage -BuilderName $builderName -TrackRoot $trackRoot -DistroRoot $distroRoot
-                if([string]::IsNullOrWhiteSpace([string]$result.Hash)){throw "Track stage '$($result.Id)' completed without a verified hash."}
-                $verified[[string]$result.Id]=$result.Hash
-                $stageResults+=$result
-                $remaining=@($remaining|Where-Object{[string]$_.Id-ne [string]$result.Id})
-                Write-DistroShelfTransactionRecord -Transaction $tx -State 'Running' -Data @{Phase='StageVerified';LastStage=$result.Id;VerifiedStages=@($verified.Keys|Sort-Object);StageResults=@($stageResults|ForEach-Object{[pscustomobject]@{Id=$_.Id;Hash=$_.Hash}})}|Out-Null
+        $verified=@{};$stageResults=@();$stageNumber=0
+        foreach($stage in $linearOrder){
+            $stageNumber++
+            foreach($dependency in @($stage.Depends)){
+                $depId=[string]$dependency
+                if(-not $verified.ContainsKey($depId)){throw "Linear DAG invariant violated: '$($stage.Id)' ran before verified prerequisite '$depId'."}
             }
+            if($OnProgress){&$OnProgress ([Math]::Min(82,(20+($stageNumber*8)))) "Executing stage ${stageNumber}: $([string]$stage.Id)"}
+            if([string]$stage.ExecutionModel -eq 'IsolatedBuilder'){
+                throw "Stage '$($stage.Id)' declares IsolatedBuilder, but Core execution is linear on the shared Track builder."
+            }
+            $result=Invoke-DistroShelfTrackStage -Distro $Distro -Stage $stage -BuilderName $builderName -TrackRoot $trackRoot -DistroRoot $distroRoot
+            if([string]::IsNullOrWhiteSpace([string]$result.Hash)){throw "Track stage '$($result.Id)' completed without a verified hash."}
+            $verified[[string]$result.Id]=$result.Hash
+            $stageResults+=$result
+            Write-DistroShelfTransactionRecord -Transaction $tx -State 'Running' -Data @{Phase='StageVerified';LastStage=$result.Id;VerifiedStages=@($verified.Keys|Sort-Object);StageResults=@($stageResults|ForEach-Object{[pscustomobject]@{Id=$_.Id;Hash=$_.Hash}})}|Out-Null
         }
 
         if($OnProgress){&$OnProgress 85 'Running final Track acceptance tests...'}
@@ -138,24 +123,17 @@ function Commit-DistroShelfTrackTransaction {
     if([string]::IsNullOrWhiteSpace([string]$BuildResult.FinalHash)){throw 'Cannot commit Track without a final hash.'}
     if(-not(Test-Path -LiteralPath $BuildResult.TrackRoot -PathType Container)){throw 'Cannot commit Track: transaction Track tree is missing.'}
     $actualHash=& $TreeHash $BuildResult.TrackRoot
-    if([string]$actualHash -ne [string]$BuildResult.FinalHash.ToLowerInvariant()){
-        throw 'Cannot commit Track: transaction tree no longer matches its verified final hash.'
-    }
+    if([string]$actualHash -ne [string]$BuildResult.FinalHash.ToLowerInvariant()){throw 'Cannot commit Track: transaction tree no longer matches its verified final hash.'}
     $target=if($TargetRoot){[IO.Path]::GetFullPath($TargetRoot)}else{[IO.Path]::GetFullPath((Get-DistroShelfTrackDefinition $BuildResult.Transaction.Distro).Root)}
     if(Test-Path -LiteralPath $target){throw "Refusing to overwrite existing Track: $target"}
     try {
         & $Promote $BuildResult.TrackRoot $target
         $committedHash=& $TreeHash $target
-        if([string]$committedHash -ne [string]$BuildResult.FinalHash.ToLowerInvariant()){
-            throw "Track integrity hash changed during promotion: $target"
-        }
+        if([string]$committedHash -ne [string]$BuildResult.FinalHash.ToLowerInvariant()){throw "Track integrity hash changed during promotion: $target"}
         [pscustomobject][ordered]@{Success=$true;Distro=$BuildResult.Transaction.Distro;Track=(Split-Path -Leaf $target);Root=$target;FinalHash=$BuildResult.FinalHash}
     } catch {
         if(Test-Path -LiteralPath $target -PathType Container -and -not(Test-Path -LiteralPath $BuildResult.TrackRoot)){
-            try {
-                New-Item -ItemType Directory -Path (Split-Path -Parent $BuildResult.TrackRoot) -Force|Out-Null
-                Move-DistroShelfDirectoryAtomic -Source $target -Destination $BuildResult.TrackRoot
-            } catch {}
+            try { New-Item -ItemType Directory -Path (Split-Path -Parent $BuildResult.TrackRoot) -Force|Out-Null;Move-DistroShelfDirectoryAtomic -Source $target -Destination $BuildResult.TrackRoot } catch {}
         }
         $tr=& $Troubleshoot $BuildResult.Transaction $_
         throw "Track commit failed; failed attempt preserved at '$tr'. $($_.Exception.Message)"
