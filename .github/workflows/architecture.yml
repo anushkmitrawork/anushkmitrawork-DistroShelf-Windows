@@ -22,3 +22,17 @@ jobs:
       - name: Run Ubuntu Track contract tests
         shell: pwsh
         run: ./tests/UbuntuTrack.Tests.ps1
+
+  ubuntu-live:
+    if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[live]') }}
+    needs: architecture
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Run Ubuntu live Track integration
+        shell: pwsh
+        env:
+          DISTROSHELF_RUN_LIVE_TESTS: '1'
+        run: ./tests/UbuntuLive.Tests.ps1
