@@ -48,14 +48,26 @@ function Invoke-DistroShelfProfileBuild {
         & $emit 82 'Running complete Profile acceptance suite...'
         $acceptance=Invoke-DistroShelfProfileAcceptance -WslName $Candidate.WslName -Tests $tests
         if(-not $acceptance.Passed){throw "Complete Profile acceptance failed for '$Distro'."}
-        $manifest=[ordered]@{SchemaVersion=4;Distro=$Distro;Profile=$Candidate.Name;WslName=$Candidate.WslName;Terminal=$Terminal;TrackHash=$TrackHash;InstalledStages=$installed;Acceptance=$acceptance;CompletedAt=[DateTime]::UtcNow.ToString('o')}
+
+        $manifest=[ordered]@{SchemaVersion=5;Distro=$Distro;Profile=$Candidate.Name;WslName=$Candidate.WslName;Terminal=$Terminal;TrackHash=$TrackHash;InstalledStages=$installed;Acceptance=$acceptance;CompletedAt=[DateTime]::UtcNow.ToString('o')}
         Write-DistroShelfJsonAtomically -Path (Join-Path $profileRoot 'profile.json') -Value $manifest
-        $profileHash=Get-DistroShelfTreeHash -Root $profileRoot -ExcludeRelativePath @('profile.hash.json')
-        if([string]::IsNullOrWhiteSpace($profileHash)){throw 'Profile hash generation returned an empty hash.'}
-        Write-DistroShelfHashRecord -Path (Join-Path $profileRoot 'profile.hash.json') -Stage 'profile' -Hash $profileHash -TestResult $acceptance|Out-Null
+        & $emit 90 'Exporting the accepted Profile exactly once...'
+        $export=Join-Path $tx.Root 'Export\profile.vhdx'
+        New-Item -ItemType Directory -Path (Split-Path -Parent $export) -Force|Out-Null
+        & wsl.exe --export $Candidate.WslName $export --format vhd 2>&1|Out-Null
+        if($LASTEXITCODE-ne 0 -or -not(Test-Path -LiteralPath $export -PathType Leaf)){throw "Failed to export accepted Profile '$($Candidate.WslName)'."}
+        $exportHash=(Get-FileHash -LiteralPath $export -Algorithm SHA256).Hash.ToLowerInvariant()
+        if([string]::IsNullOrWhiteSpace($exportHash)){throw "Failed to hash exported Profile '$($Candidate.WslName)'."}
+        $payload=[ordered]@{SchemaVersion=1;Kind='profile-artifact';ProfileId=$Candidate.Id;Name=$Candidate.Name;Distro=$Distro;WslName=$Candidate.WslName;Algorithm='SHA256';Hash=$exportHash;AcceptancePassed=$true;Artifact='Export/profile.vhdx';CreatedAt=[DateTime]::UtcNow.ToString('o')}
+        $payloadRecordPath=Join-Path $profileRoot 'profile-artifact.hash.json'
+        Write-DistroShelfJsonAtomically -Path $payloadRecordPath -Value $payload
+        $payloadVerification=(Get-FileHash -LiteralPath $export -Algorithm SHA256).Hash.ToLowerInvariant()
+        if($payloadVerification-ne $exportHash){throw 'Exported Profile artifact changed during verification.'}
+
+        Write-DistroShelfHashRecord -Path (Join-Path $profileRoot 'profile.hash.json') -Stage 'profile' -Hash $exportHash -TestResult $acceptance|Out-Null
         Complete-DistroShelfTransaction -Transaction $tx|Out-Null
-        & $emit 100 "Profile $($Candidate.Name) passed all acceptance tests and is ready to commit."
-        return [pscustomobject][ordered]@{Success=$true;Transaction=$tx;Candidate=$Candidate;ProfileRoot=$profileRoot;WslStorage=$wslStorage;ProfileHash=$profileHash;Acceptance=$acceptance}
+        & $emit 100 "Profile $($Candidate.Name) passed acceptance and has one verified commit artifact."
+        return [pscustomobject][ordered]@{Success=$true;Transaction=$tx;Candidate=$Candidate;ProfileRoot=$profileRoot;WslStorage=$wslStorage;ExportPath=$export;ProfileHash=$exportHash;Acceptance=$acceptance}
     } catch {
         $tr=Move-DistroShelfTransactionToTroubleshoot -Transaction $tx -ErrorRecord $_
         return [pscustomobject][ordered]@{Success=$false;Transaction=$tx;Candidate=$Candidate;TroubleshootPath=$tr;Error=$_.Exception.Message}
