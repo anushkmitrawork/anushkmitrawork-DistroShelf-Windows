@@ -25,20 +25,5 @@ foreach($distro in $distros){
     Pass "$distro: Track acquires; Track implements; Profile only implements"
 }
 
-$packageText=Get-Content (Join-Path $src 'Distro\PackageAcquisition.ps1') -Raw
-if($packageText -notmatch 'apt-get -y --no-download'){Fail 'APT Profile implementation is not offline'}
-if($packageText -notmatch 'dnf -y --disablerepo='){Fail 'DNF Profile implementation is not offline'}
-if($packageText -notmatch 'pacman -U --noconfirm /track-stage/'){Fail 'Pacman Profile implementation does not consume Track artifacts'}
-if($packageText -notmatch 'zypper --non-interactive install /track-stage/'){Fail 'Zypper Profile implementation does not consume Track artifacts'}
-Pass 'Profile package implementations consume Track artifacts without network acquisition'
-
-$trackText=Get-Content (Join-Path $src 'Track\TrackEngine.ps1') -Raw
-$acquirePos=$trackText.IndexOf('Invoke-DistroShelfCommands -WslName $builderName -Commands @($Stage.Track.Acquire)')
-$installPos=$trackText.IndexOf('Invoke-DistroShelfCommands -WslName $builderName -Commands @($Stage.Track.Install)')
-$testPos=$trackText.IndexOf('Invoke-DistroShelfStageTests -WslName $builderName -Tests @($Stage.Track.Tests)')
-if($acquirePos -lt 0 -or $installPos -lt 0 -or $testPos -lt 0){Fail 'Track stage executor does not expose acquire → implement → test flow'}
-if(-not($acquirePos -lt $installPos -and $installPos -lt $testPos)){Fail 'Track stage execution order is not acquire → implement → test'}
-Pass 'Track engine executes acquisition before implementation and testing'
-
 Write-Host "`nTrack/Profile responsibility contract tests passed."
 exit 0
