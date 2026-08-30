@@ -13,3 +13,6 @@ jobs:
       - name: Run architecture tests
         shell: pwsh
         run: ./tests/Architecture.Tests.ps1
+      - name: Run Profile atomicity tests
+        shell: pwsh
+        run: ./tests/ProfileAtomicity.Tests.ps1
