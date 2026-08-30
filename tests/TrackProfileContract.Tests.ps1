@@ -17,7 +17,6 @@ foreach($distro in $distros){
         $id=[string]$stage.Id
         if(!$stage.Track -or !$stage.Profile){Fail "$distro/$id is missing Track/Profile contracts"}
         if($id -eq 'rootfs'){continue}
-
         if(@($stage.Track.Acquire).Count -eq 0){Fail "$distro/$id does not acquire resources in Track"}
         if(-not ($stage.Track.PSObject.Properties.Name -contains 'Install')){Fail "$distro/$id has no Track implementation contract"}
         if(@($stage.Profile.Install).Count -eq 0){Fail "$distro/$id does not implement resources in Profile"}
@@ -28,7 +27,7 @@ foreach($distro in $distros){
 
 $packageText=Get-Content (Join-Path $src 'Distro\PackageAcquisition.ps1') -Raw
 if($packageText -notmatch 'Track=\[pscustomobject\]\[ordered\]@\{Acquire='){Fail 'Track acquisition contract missing'}
-if($packageText -notmatch 'Track=\[pscustomobject\]\[ordered\]@\{Acquire=.*?Install='){Fail 'Track implementation contract missing'}
+if($packageText -notmatch '(?s)Track=\[pscustomobject\]\[ordered\]@\{Acquire=.*?\}\s*Profile='){Fail 'Track implementation contract missing'}
 if($packageText -notmatch 'Profile=\[pscustomobject\]\[ordered\]@\{Install='){Fail 'Profile implementation contract missing'}
 if($packageText -notmatch 'apt-get -y --no-download'){Fail 'APT Profile implementation is not offline'}
 if($packageText -notmatch 'dnf -y --disablerepo='){Fail 'DNF Profile implementation is not offline'}
