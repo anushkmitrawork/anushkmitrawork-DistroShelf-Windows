@@ -61,8 +61,6 @@ function Invoke-DistroShelfTrackBuilder {
         $candidate=[pscustomobject]@{Id=$tx.Id;WslName=$builderName;Distro=$Distro;Name="$Distro-TrackBuilder"}
         Invoke-DistroShelfWslImport -Profile $candidate -RootfsPath $rootfs.Path -ExpectedSha256 $rootfs.Sha256 -StorageRoot (Join-Path $tx.Root 'Wsl')|Out-Null
 
-        # IMPORTANT: stage eligibility is recalculated after every successful stage.
-        # The next stage is never considered ready from a planned/synthetic hash.
         $verified=@{};$remaining=@($stages);$stageResults=@();$batchNumber=0
         while($remaining.Count){
             $ready=@(Get-DistroShelfReadyStages -Stages $remaining -VerifiedHashes $verified)
@@ -71,13 +69,8 @@ function Invoke-DistroShelfTrackBuilder {
             if(!$batch.Count){throw 'Track scheduler selected an empty batch.'}
             $batchNumber++;$label=($batch|ForEach-Object{[string]$_.Id}) -join ', '
             if($OnProgress){&$OnProgress ([Math]::Min(82,(20+($batchNumber*8)))) "Executing verified batch $batchNumber: $label"}
-
-            # SharedBuilder stages are intentionally serial. IsolatedBuilder concurrency
-            # is reserved for stages that explicitly own independent execution state.
             foreach($stage in @($batch)){
                 if([string]$stage.ExecutionModel -eq 'IsolatedBuilder'){
-                    # The current Track builder does not yet provide isolated per-stage WSL
-                    # environments, so do not execute this as shared mutable work by accident.
                     throw "Stage '$($stage.Id)' declares IsolatedBuilder, but Track builder isolation is not configured."
                 }
                 $result=Invoke-DistroShelfTrackStage -Distro $Distro -Stage $stage -BuilderName $builderName -TrackRoot $trackRoot -DistroRoot $distroRoot
@@ -92,8 +85,9 @@ function Invoke-DistroShelfTrackBuilder {
         $final=Invoke-DistroShelfTrackAcceptance -WslName $builderName -Tests @($provider.TrackFinalTests)
         if(-not $final.Passed){throw "Final Track acceptance failed for '$Distro'."}
         $finalHash=Get-DistroShelfTreeHash -Root $trackRoot -ExcludeRelativePath @('metadata/track.hash.json','metadata/track.json')
+        if([string]::IsNullOrWhiteSpace($finalHash) -or $finalHash.Length -ne 64){throw 'Final Track hash generation failed.'}
         Write-DistroShelfHashRecord -Path (Join-Path (Join-Path $trackRoot 'metadata') 'track.hash.json') -Stage 'track' -Hash $finalHash -TestResult $final|Out-Null
-        $manifest=[ordered]@{SchemaVersion=6;Distro=$Distro;Track=$provider.Track;PackageManager=$provider.PackageManager;FinalHash=$finalHash;Stages=($stageResults|ForEach-Object{[pscustomobject]@{Id=$_.Id;Hash=$_.Hash;Tests=$_.Tests}});CreatedAt=[DateTime]::UtcNow.ToString('o')}
+        $manifest=[ordered]@{SchemaVersion=7;Distro=$Distro;Track=$provider.Track;PackageManager=$provider.PackageManager;FinalHash=$finalHash;Stages=($stageResults|ForEach-Object{[pscustomobject]@{Id=$_.Id;Hash=$_.Hash;Tests=$_.Tests}});CreatedAt=[DateTime]::UtcNow.ToString('o')}
         $manifest|ConvertTo-Json -Depth 30|Set-Content -LiteralPath (Join-Path $trackRoot 'metadata\track.json') -Encoding UTF8
         try{& wsl.exe --terminate $builderName 2>$null|Out-Null}catch{};try{& wsl.exe --unregister $builderName 2>$null|Out-Null}catch{}
         if($OnProgress){&$OnProgress 100 "Track $Distro verified; ready for atomic commit."}
@@ -109,8 +103,17 @@ function Commit-DistroShelfTrackTransaction {
     param([Parameter(Mandatory)]$BuildResult)
     if(-not $BuildResult.Success){throw 'Cannot commit a failed Track transaction.'}
     if([string]::IsNullOrWhiteSpace([string]$BuildResult.FinalHash)){throw 'Cannot commit Track without a final hash.'}
-    $target=(Get-DistroShelfTrackDefinition $BuildResult.Transaction.Distro).Root
+    if(-not(Test-Path -LiteralPath $BuildResult.TrackRoot -PathType Container)){throw 'Cannot commit Track: transaction Track tree is missing.'}
+    $actualHash=Get-DistroShelfTreeHash -Root $BuildResult.TrackRoot -ExcludeRelativePath @('metadata/track.hash.json','metadata/track.json')
+    if($actualHash.ToLowerInvariant() -ne [string]$BuildResult.FinalHash.ToLowerInvariant()){
+        throw 'Cannot commit Track: transaction tree no longer matches its verified final hash.'
+    }
+    $definition=Get-DistroShelfTrackDefinition $BuildResult.Transaction.Distro
+    $target=[IO.Path]::GetFullPath([string]$definition.Root)
     if(Test-Path -LiteralPath $target){throw "Refusing to overwrite existing Track: $target"}
     Move-DistroShelfDirectoryAtomic -Source $BuildResult.TrackRoot -Destination $target
+    if(-not(Test-DistroShelfTrackIntegrity -Distro $BuildResult.Transaction.Distro)){
+        throw "Track integrity verification failed after promotion: $target"
+    }
     [pscustomobject][ordered]@{Success=$true;Distro=$BuildResult.Transaction.Distro;Track=(Split-Path -Leaf $target);Root=$target;FinalHash=$BuildResult.FinalHash}
 }
