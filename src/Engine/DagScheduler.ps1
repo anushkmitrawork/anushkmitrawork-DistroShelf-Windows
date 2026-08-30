@@ -1,6 +1,6 @@
 # DistroShelf - dependency DAG scheduler
-# The scheduler derives safe execution batches from prerequisites and optional resource locks.
-# Actual stage execution remains the responsibility of the caller.
+# Scheduling is derived from declared prerequisites and resource locks.
+# The scheduler NEVER marks work verified; only a successful executor may do that.
 
 function Test-DistroShelfDag {
     param([Parameter(Mandatory)][object[]]$Stages)
@@ -40,6 +40,7 @@ function Select-DistroShelfParallelBatch {
     $batch=@();$locks=@{}
     foreach($stage in @($ReadyStages)){
         if($batch.Count-ge $MaxConcurrency){break}
+        if($stage.SafeParallel -eq $false -and $batch.Count){continue}
         $lock=[string]$stage.ResourceLock
         if($lock-and-$locks.ContainsKey($lock)){continue}
         $batch+=,$stage
@@ -58,8 +59,6 @@ function Get-DistroShelfExecutionBatches {
         if(!$ready.Count){throw 'DAG is blocked because required prerequisite stages cannot become verified.'}
         $batch=@(Select-DistroShelfParallelBatch -ReadyStages $ready -MaxConcurrency $MaxConcurrency)
         $batches+=,[object[]]$batch
-        # Planning only: a stage in the batch is treated as complete solely for planning the
-        # next dependency wave. The execution engine must create the real hashes before running it.
         foreach($stage in $batch){$completed[[string]$stage.Id]='PLANNED'}
         $remaining=@($remaining|Where-Object{[string]$batch.Id -notcontains [string]$_.Id})
     }
