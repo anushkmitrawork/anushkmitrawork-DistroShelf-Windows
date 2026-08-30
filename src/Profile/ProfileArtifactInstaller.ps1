@@ -1,4 +1,5 @@
 # DistroShelf - local Track artifact installer
+# The Profile installer consumes only verified Track material.
 
 function Get-DistroShelfProfileStageRoot {
     param([Parameter(Mandatory)][string]$TrackRoot,[Parameter(Mandatory)][string]$StageId)
@@ -12,25 +13,45 @@ function Install-DistroShelfProfileStageFromTrack {
     $root=Get-DistroShelfProfileStageRoot -TrackRoot $TrackRoot -StageId ([string]$Stage.Id)
     $export=[string]$Stage.Track.ExportType
     $manager=[string]$Stage.PackageManager
+    $remotePattern='(^|[;&|`n\r]|\s)(curl|wget|Invoke-WebRequest|git\s+clone|apt(-get)?\s+.*https?://|dnf\s+.*https?://|zypper\s+.*https?://|pacman\s+.*https?://|flatpak\s+install\s+.*https?://)'
     switch($export){
         'apt-cache' {
-            $source=Join-Path $root 'packages';if(-not(Test-Path $source)){throw "Track stage '$($Stage.Id)' has no package directory."}
+            $source=Join-Path $root 'packages';if(-not(Test-Path $source -PathType Container)){throw "Track stage '$($Stage.Id)' has no package directory."}
+            $count=@(Get-ChildItem -LiteralPath $source -Recurse -File -Filter '*.deb').Count;if($count -eq 0){throw "Track stage '$($Stage.Id)' contains no .deb artifacts."}
             Invoke-DistroShelfCommand -WslName $WslName -Command "test -n \"`$(find /track-stage -type f -name '*.deb' -print -quit)\""|Out-Null
             return Invoke-DistroShelfCommand -WslName $WslName -Command "apt-get install -y --no-download /track-stage/*.deb" -CaptureOutput
         }
         'rpm-cache' {
-            $source=Join-Path $root 'packages';if(-not(Test-Path $source)){throw "Track stage '$($Stage.Id)' has no package directory."}
-            if($manager -eq 'dnf'){return Invoke-DistroShelfCommand -WslName $WslName -Command "dnf install -y /track-stage/*.rpm" -CaptureOutput}
+            $source=Join-Path $root 'packages';if(-not(Test-Path $source -PathType Container)){throw "Track stage '$($Stage.Id)' has no package directory."}
+            $count=@(Get-ChildItem -LiteralPath $source -Recurse -File -Filter '*.rpm').Count;if($count -eq 0){throw "Track stage '$($Stage.Id)' contains no .rpm artifacts."}
+            if($manager -eq 'dnf'){return Invoke-DistroShelfCommand -WslName $WslName -Command "dnf install -y --disablerepo='*' /track-stage/*.rpm" -CaptureOutput}
             if($manager -eq 'zypper'){return Invoke-DistroShelfCommand -WslName $WslName -Command "zypper --non-interactive install --no-recommends /track-stage/*.rpm" -CaptureOutput}
             throw "No RPM local installer is defined for '$manager'."
         }
-        'pacman-cache' { return Invoke-DistroShelfCommand -WslName $WslName -Command "pacman -U --noconfirm /track-stage/*.pkg.tar.*" -CaptureOutput }
+        'pacman-cache' {
+            $source=Join-Path $root 'packages';if(-not(Test-Path $source -PathType Container)){throw "Track stage '$($Stage.Id)' has no package directory."}
+            $count=@(Get-ChildItem -LiteralPath $source -Recurse -File -Include '*.pkg.tar.zst','*.pkg.tar.xz','*.pkg.tar.gz','*.pkg.tar').Count;if($count -eq 0){throw "Track stage '$($Stage.Id)' contains no Arch package artifacts."}
+            return Invoke-DistroShelfCommand -WslName $WslName -Command "pacman -U --noconfirm /track-stage/*.pkg.tar.*" -CaptureOutput
+        }
         'wsl-path' {
-            if([string]$Stage.Id -eq 'flathub'){return Invoke-DistroShelfCommand -WslName $WslName -Command 'flatpak remote-add --if-not-exists flathub /track-stage/flathub.flatpakrepo' -CaptureOutput}
+            if([string]$Stage.Id -eq 'flathub'){
+                $repo=Join-Path $root 'flathub.flatpakrepo';if(-not(Test-Path $repo -PathType Leaf)){$repo=Get-ChildItem $root -Recurse -File -Filter '*.flatpakrepo'|Select-Object -First 1|ForEach-Object FullName};if(-not$repo){throw "Track Flathub stage contains no .flatpakrepo artifact."}
+                return Invoke-DistroShelfCommand -WslName $WslName -Command 'flatpak remote-add --if-not-exists flathub /track-stage/flathub.flatpakrepo' -CaptureOutput
+            }
             throw "No local installer is defined for wsl-path stage '$($Stage.Id)'."
         }
-        'flatpak-sideload' { return Invoke-DistroShelfCommand -WslName $WslName -Command "flatpak install --assumeyes --sideload-repo=/track-stage/sideload flathub '$($Stage.Track.ExportValue)'" -CaptureOutput }
-        'none' { return [pscustomobject]@{ExitCode=0;Output=''} }
+        'flatpak-sideload' {
+            $sideload=Join-Path $root 'sideload';if(-not(Test-Path $sideload -PathType Container)){throw "Track stage '$($Stage.Id)' has no sideload repository."}
+            return Invoke-DistroShelfCommand -WslName $WslName -Command "flatpak install --assumeyes --sideload-repo=/track-stage/sideload '$($Stage.Track.ExportValue)'" -CaptureOutput
+        }
         default { throw "Unsupported Track export type '$export' for Profile stage '$($Stage.Id)'." }
     }
+}
+
+function Test-DistroShelfProfileInstallCommands {
+    param([Parameter(Mandatory)][object]$Stage)
+    foreach($cmd in @($Stage.Profile.Install)){
+        if([string]$cmd -match $remotePattern){throw "Profile stage '$($Stage.Id)' contains a network acquisition command; Profile installation must consume Track artifacts only."}
+    }
+    $true
 }
