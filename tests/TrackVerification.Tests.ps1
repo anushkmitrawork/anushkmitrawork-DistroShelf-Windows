@@ -47,6 +47,13 @@ try {
     if(-not(Test-DistroShelfHashRecord -Path (Join-Path $track 'metadata\flatpak.hash.json') -Root (Join-Path $track 'flatpak') -Stage 'flatpak')){Fail 'flatpak dependency hash did not verify'}
     Pass 'multiple dependency hashes verify independently'
 
+    foreach($stageId in @('podman','flatpak')){
+        $record=Get-Content (Join-Path $track "metadata\$stageId.hash.json") -Raw|ConvertFrom-Json
+        if([string]$record.Algorithm -ne 'SHA256'){Fail "dependency '$stageId' does not record SHA-256"}
+        if(-not [bool]$record.TestResult.Passed){Fail "dependency '$stageId' hash record does not attest a passing verification"}
+    }
+    Pass 'dependency hash records carry explicit SHA-256 and passing-test attestations'
+
     $wholeHash=Get-DistroShelfTreeHash -Root $track -ExcludeRelativePath @('metadata/track.hash.json','metadata/track.json')
     if([string]::IsNullOrWhiteSpace($wholeHash) -or $wholeHash.Length -ne 64){Fail 'whole-Track hash is not SHA-256'}
     Write-DistroShelfHashRecord -Path (Join-Path $track 'metadata\track.hash.json') -Stage 'track' -Hash $wholeHash -TestResult ([pscustomobject]@{Passed=$true})|Out-Null
