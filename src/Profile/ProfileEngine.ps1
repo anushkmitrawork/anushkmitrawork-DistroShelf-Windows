@@ -20,9 +20,15 @@ function Invoke-DistroShelfProfileBuild {
         $actualTrack=Get-DistroShelfTreeHash -Root $TrackRoot -ExcludeRelativePath @('metadata/track.hash.json','metadata/track.json')
         if($TrackHash.ToLowerInvariant() -ne $actualTrack.ToLowerInvariant()){throw "Supplied Track hash does not match '$Distro'."}
         $provider=Get-DistroShelfProvider -Distro $Distro
-        $stages=@($provider.Stages|Where-Object{$_.Id-ne 'rootfs'})
+        $allStages=@($provider.Stages)
+        $terminalStages=@($allStages|Where-Object{[string]$_.Kind -eq 'terminal'})
+        if(!$terminalStages.Count){throw "No terminal preferences are defined for '$Distro'."}
+        $selectedTerminal=@($terminalStages|Where-Object{[string]$_.TerminalName -eq $Terminal})|Select-Object -First 1
+        if(!$selectedTerminal){throw "Terminal '$Terminal' is not available for '$Distro'."}
+        $stages=@($allStages|Where-Object{[string]$_.Kind -ne 'terminal'})+$selectedTerminal
+        $stages=@($stages|Where-Object{[string]$_.Id -ne 'rootfs'})
         if(!$stages.Count){throw "No Profile stages are defined for '$Distro'."}
-        Test-DistroShelfRequiredTrackStages -TrackRoot $TrackRoot -Stages $provider.Stages|Out-Null
+        Test-DistroShelfRequiredTrackStages -TrackRoot $TrackRoot -Stages $stages|Out-Null
         $rootfs=Get-ChildItem -LiteralPath (Join-Path $TrackRoot 'Distro') -File -ErrorAction SilentlyContinue|Select-Object -First 1
         if(!$rootfs){throw "Verified Track has no root filesystem artifact for '$Distro'."}
         $rootfsHash=(Get-FileHash -LiteralPath $rootfs.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -40,7 +46,7 @@ function Invoke-DistroShelfProfileBuild {
             & $emit (15+[int](50*($done-1)/$stages.Count)) "Installing Profile stage '$id' from verified Track artifacts..."
             $r=Install-DistroShelfProfileStageFromTrack -WslName $Candidate.WslName -Distro $Distro -Stage $stage -TrackRoot $TrackRoot
             if($r.ExitCode-ne 0){throw "Profile stage '$id' installation failed using verified Track artifacts.`n$($r.Output)"}
-            $installed+=[pscustomobject]@{Stage=$id;Installed=$true;Source='Track'}
+            $installed+=[pscustomobject]@{Stage=$id;Installed=$true;Source='Track';Terminal=$(if($stage.TerminalName){$stage.TerminalName}else{$null})}
             $tests+=@($stage.Profile.Tests)
         }
         if($provider.ProfileFinalTests){$tests+=@($provider.ProfileFinalTests)}
@@ -49,7 +55,7 @@ function Invoke-DistroShelfProfileBuild {
         $acceptance=Invoke-DistroShelfProfileAcceptance -WslName $Candidate.WslName -Tests $tests
         if(-not $acceptance.Passed){throw "Complete Profile acceptance failed for '$Distro'."}
 
-        $manifest=[ordered]@{SchemaVersion=5;Distro=$Distro;Profile=$Candidate.Name;WslName=$Candidate.WslName;Terminal=$Terminal;TrackHash=$TrackHash;InstalledStages=$installed;Acceptance=$acceptance;CompletedAt=[DateTime]::UtcNow.ToString('o')}
+        $manifest=[ordered]@{SchemaVersion=6;Distro=$Distro;Profile=$Candidate.Name;WslName=$Candidate.WslName;Terminal=$Terminal;TrackHash=$TrackHash;SelectedTerminal=$selectedTerminal.TerminalName;InstalledStages=$installed;Acceptance=$acceptance;CompletedAt=[DateTime]::UtcNow.ToString('o')}
         Write-DistroShelfJsonAtomically -Path (Join-Path $profileRoot 'profile.json') -Value $manifest
         & $emit 90 'Exporting the accepted Profile exactly once...'
         $export=Join-Path $tx.Root 'Export\profile.vhdx'
@@ -58,7 +64,7 @@ function Invoke-DistroShelfProfileBuild {
         if($LASTEXITCODE-ne 0 -or -not(Test-Path -LiteralPath $export -PathType Leaf)){throw "Failed to export accepted Profile '$($Candidate.WslName)'."}
         $exportHash=(Get-FileHash -LiteralPath $export -Algorithm SHA256).Hash.ToLowerInvariant()
         if([string]::IsNullOrWhiteSpace($exportHash)){throw "Failed to hash exported Profile '$($Candidate.WslName)'."}
-        $payload=[ordered]@{SchemaVersion=1;Kind='profile-artifact';ProfileId=$Candidate.Id;Name=$Candidate.Name;Distro=$Distro;WslName=$Candidate.WslName;Algorithm='SHA256';Hash=$exportHash;AcceptancePassed=$true;Artifact='Export/profile.vhdx';CreatedAt=[DateTime]::UtcNow.ToString('o')}
+        $payload=[ordered]@{SchemaVersion=2;Kind='profile-artifact';ProfileId=$Candidate.Id;Name=$Candidate.Name;Distro=$Distro;WslName=$Candidate.WslName;Algorithm='SHA256';Hash=$exportHash;AcceptancePassed=$true;Artifact='Export/profile.vhdx';SelectedTerminal=$selectedTerminal.TerminalName;CreatedAt=[DateTime]::UtcNow.ToString('o')}
         $payloadRecordPath=Join-Path $profileRoot 'profile-artifact.hash.json'
         Write-DistroShelfJsonAtomically -Path $payloadRecordPath -Value $payload
         $payloadVerification=(Get-FileHash -LiteralPath $export -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -67,7 +73,7 @@ function Invoke-DistroShelfProfileBuild {
         Write-DistroShelfHashRecord -Path (Join-Path $profileRoot 'profile.hash.json') -Stage 'profile' -Hash $exportHash -TestResult $acceptance|Out-Null
         Complete-DistroShelfTransaction -Transaction $tx|Out-Null
         & $emit 100 "Profile $($Candidate.Name) passed acceptance and has one verified commit artifact."
-        return [pscustomobject][ordered]@{Success=$true;Transaction=$tx;Candidate=$Candidate;ProfileRoot=$profileRoot;WslStorage=$wslStorage;ExportPath=$export;ProfileHash=$exportHash;Acceptance=$acceptance}
+        return [pscustomobject][ordered]@{Success=$true;Transaction=$tx;Candidate=$Candidate;ProfileRoot=$profileRoot;WslStorage=$wslStorage;ExportPath=$export;ProfileHash=$exportHash;Acceptance=$acceptance;SelectedTerminal=$selectedTerminal.TerminalName}
     } catch {
         $tr=Move-DistroShelfTransactionToTroubleshoot -Transaction $tx -ErrorRecord $_
         return [pscustomobject][ordered]@{Success=$false;Transaction=$tx;Candidate=$Candidate;TroubleshootPath=$tr;Error=$_.Exception.Message}
