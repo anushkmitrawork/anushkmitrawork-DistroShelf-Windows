@@ -19,3 +19,6 @@ jobs:
       - name: Run Track atomicity tests
         shell: pwsh
         run: ./tests/TrackAtomicity.Tests.ps1
+      - name: Run Ubuntu reference tests
+        shell: pwsh
+        run: ./tests/UbuntuReference.Tests.ps1
