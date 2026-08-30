@@ -13,6 +13,12 @@ jobs:
       - name: Run architecture tests
         shell: pwsh
         run: ./tests/Architecture.Tests.ps1
+      - name: Run current Profile registry tests
+        shell: pwsh
+        run: ./tests/DistroShelf.Tests.ps1
+      - name: Run Track registry tests
+        shell: pwsh
+        run: ./tests/DistroTrack.Tests.ps1
       - name: Run Ubuntu Track contract tests
         shell: pwsh
         run: ./tests/UbuntuTrack.Tests.ps1
