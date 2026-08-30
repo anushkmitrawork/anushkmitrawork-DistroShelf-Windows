@@ -50,19 +50,28 @@ function Test-DistroShelfPersistedStageHash {
 
 function Get-DistroShelfReadyStages {
     param([Parameter(Mandatory)][object[]]$Stages,[Parameter(Mandatory)][hashtable]$VerifiedHashes,[string]$HashRoot)
-    @($Stages|Where-Object{
-        $deps=@($_.Depends)
-        $depsReady=($deps|Where-Object{
-            $depId=[string]$_
-            if(-not $VerifiedHashes.ContainsKey($depId)){return $false}
+    $ready=@()
+    foreach($stage in @($Stages)){
+        $id=[string]$stage.Id
+        if($VerifiedHashes.ContainsKey($id)){continue}
+        $dependenciesSatisfied=$true
+        foreach($dependency in @($stage.Depends)){
+            $depId=[string]$dependency
+            if(-not $VerifiedHashes.ContainsKey($depId)){$dependenciesSatisfied=$false;break}
             if($HashRoot){
                 $depStage=@($Stages|Where-Object{[string]$_.Id -eq $depId}|Select-Object -First 1)
-                if($depStage -and -not(Test-DistroShelfPersistedStageHash -Stage $depStage -HashRoot $HashRoot)){return $false}
+                if($depStage.Count -eq 0){
+                    # A completed prerequisite is no longer in the remaining-stage list.
+                    # When a persisted hash is available, validate it using a lightweight
+                    # stage descriptor carrying the dependency id.
+                    $depStage=[pscustomobject]@{Id=$depId;Kind=if($depId -eq 'rootfs'){'rootfs'}else{'dependency'}}
+                }else{$depStage=$depStage[0]}
+                if(-not(Test-DistroShelfPersistedStageHash -Stage $depStage -HashRoot $HashRoot)){$dependenciesSatisfied=$false;break}
             }
-            return $true
-        }).Count -eq 0
-        (-not $VerifiedHashes.ContainsKey([string]$_.Id)) -and $depsReady
-    })
+        }
+        if($dependenciesSatisfied){$ready+=,$stage}
+    }
+    return $ready
 }
 
 function Select-DistroShelfParallelBatch {
@@ -87,11 +96,13 @@ function Get-DistroShelfExecutionBatches {
     while($remaining.Count){
         $ready=@(Get-DistroShelfReadyStages -Stages $remaining -VerifiedHashes $completed)
         if(!$ready.Count){throw 'DAG is blocked because required prerequisite hashes cannot be satisfied.'}
-        $batch=@(Select-DistroShelfParallelBatch $ready $MaxConcurrency);$batches+=,[object[]]$batch
-        foreach($stage in $batch){$completed[[string]$stage.Id]='PLANNED'}
-        $remaining=@($remaining|Where-Object{[string]$batch.Id -notcontains [string]$_.Id})
+        $batch=@(Select-DistroShelfParallelBatch -ReadyStages $ready -MaxConcurrency $MaxConcurrency)
+        $batches+=,[object[]]$batch
+        foreach($stage in @($batch)){$completed[[string]$stage.Id]='PLANNED'}
+        $batchIds=@($batch|ForEach-Object{[string]$_.Id})
+        $remaining=@($remaining|Where-Object{$batchIds -notcontains [string]$_.Id})
     }
-    $batches
+    return $batches
 }
 
 function Get-DistroShelfExecutionPlan {
