@@ -27,9 +27,9 @@ foreach($distro in $distros){
 }
 
 $packageText=Get-Content (Join-Path $src 'Distro\PackageAcquisition.ps1') -Raw
-foreach($token in @('Track=[pscustomobject][ordered]@{Acquire=','Install=','Profile=[pscustomobject][ordered]@{Install=')){
-    if($packageText -notmatch [regex]::Escape($token)){Fail "Package acquisition contract missing: $token"}
-}
+if($packageText -notmatch 'Track=\[pscustomobject\]\[ordered\]@\{Acquire='){Fail 'Track acquisition contract missing'}
+if($packageText -notmatch 'Track=\[pscustomobject\]\[ordered\]@\{Acquire=.*?Install='){Fail 'Track implementation contract missing'}
+if($packageText -notmatch 'Profile=\[pscustomobject\]\[ordered\]@\{Install='){Fail 'Profile implementation contract missing'}
 if($packageText -notmatch 'apt-get -y --no-download'){Fail 'APT Profile implementation is not offline'}
 if($packageText -notmatch 'dnf -y --disablerepo='){Fail 'DNF Profile implementation is not offline'}
 if($packageText -notmatch 'pacman -U --noconfirm /track-stage/'){Fail 'Pacman Profile implementation does not consume Track artifacts'}
