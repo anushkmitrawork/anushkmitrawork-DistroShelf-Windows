@@ -27,9 +27,9 @@ foreach($d in @('Ubuntu','Debian','Fedora','Arch Linux','openSUSE')){
         $matches=@($terminalStages|Where-Object{[string]$_.TerminalName -eq $terminal})
         if($matches.Count -ne 1){Fail "terminal matrix for ${d}: expected exactly one '$terminal' stage"}
         $stage=$matches[0]
-        if([string]::IsNullOrWhiteSpace([string]$stage.TerminalPackage)){Fail "terminal matrix for ${d}/$terminal: missing package"}
-        if([string]::IsNullOrWhiteSpace([string]$stage.TerminalExecutable)){Fail "terminal matrix for ${d}/$terminal: missing executable"}
-        if([string]$stage.ExecutionModel -ne 'SharedBuilder'){Fail "terminal matrix for ${d}/$terminal: unexpected execution model"}
+        if([string]::IsNullOrWhiteSpace([string]$stage.TerminalPackage)){Fail "terminal matrix for ${d}/$terminal`: missing package"}
+        if([string]::IsNullOrWhiteSpace([string]$stage.TerminalExecutable)){Fail "terminal matrix for ${d}/$terminal`: missing executable"}
+        if([string]$stage.ExecutionModel -ne 'SharedBuilder'){Fail "terminal matrix for ${d}/$terminal`: unexpected execution model"}
     }
     Pass "Distro provider valid and Profile commands are offline: ${d}"
     Pass "Track contains complete terminal matrix: ${d}"
