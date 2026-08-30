@@ -37,9 +37,9 @@ if($packageText -notmatch 'zypper --non-interactive install /track-stage/'){Fail
 Pass 'Profile package implementations consume Track artifacts without network acquisition'
 
 $trackText=Get-Content (Join-Path $src 'Track\TrackEngine.ps1') -Raw
-$acquirePos=$trackText.IndexOf('Invoke-DistroShelfCommands -WslName $BuilderName -Commands @($Stage.Track.Acquire)')
-$installPos=$trackText.IndexOf('Invoke-DistroShelfCommands -WslName $BuilderName -Commands @($Stage.Track.Install)')
-$testPos=$trackText.IndexOf('Invoke-DistroShelfStageTests -WslName $BuilderName -Tests @($Stage.Track.Tests)')
+$acquirePos=$trackText.IndexOf('Invoke-DistroShelfCommands -WslName $builderName -Commands @($Stage.Track.Acquire)')
+$installPos=$trackText.IndexOf('Invoke-DistroShelfCommands -WslName $builderName -Commands @($Stage.Track.Install)')
+$testPos=$trackText.IndexOf('Invoke-DistroShelfStageTests -WslName $builderName -Tests @($Stage.Track.Tests)')
 if($acquirePos -lt 0 -or $installPos -lt 0 -or $testPos -lt 0){Fail 'Track stage executor does not expose acquire → implement → test flow'}
 if(-not($acquirePos -lt $installPos -and $installPos -lt $testPos)){Fail 'Track stage execution order is not acquire → implement → test'}
 Pass 'Track engine executes acquisition before implementation and testing'
