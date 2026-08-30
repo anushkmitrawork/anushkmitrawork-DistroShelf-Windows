@@ -13,25 +13,29 @@ function Install-DistroShelfProfileStageFromTrack {
     $root=Get-DistroShelfProfileStageRoot -TrackRoot $TrackRoot -StageId ([string]$Stage.Id)
     $export=[string]$Stage.Track.ExportType
     $manager=[string]$Stage.PackageManager
+    $stageId=([string]$Stage.Id -replace ':','-')
     $remotePattern='(^|[;&|`n\r]|\s)(curl|wget|Invoke-WebRequest|git\s+clone|apt(-get)?\s+.*https?://|dnf\s+.*https?://|zypper\s+.*https?://|pacman\s+.*https?://|flatpak\s+install\s+.*https?://)'
     switch($export){
         'apt-cache' {
             $source=Join-Path $root 'packages';if(-not(Test-Path $source -PathType Container)){throw "Track stage '$($Stage.Id)' has no package directory."}
             $count=@(Get-ChildItem -LiteralPath $source -Recurse -File -Filter '*.deb').Count;if($count -eq 0){throw "Track stage '$($Stage.Id)' contains no .deb artifacts."}
-            Invoke-DistroShelfCommand -WslName $WslName -Command "test -n \"`$(find /track-stage -type f -name '*.deb' -print -quit)\""|Out-Null
-            return Invoke-DistroShelfCommand -WslName $WslName -Command "apt-get install -y --no-download /track-stage/*.deb" -CaptureOutput
+            $mounted="/track-stage/$stageId/packages/*.deb"
+            Invoke-DistroShelfCommand -WslName $WslName -Command "test -n \"`$(find /track-stage/$stageId/packages -type f -name '*.deb' -print -quit)\""|Out-Null
+            return Invoke-DistroShelfCommand -WslName $WslName -Command "apt-get install -y --no-download $mounted" -CaptureOutput
         }
         'rpm-cache' {
             $source=Join-Path $root 'packages';if(-not(Test-Path $source -PathType Container)){throw "Track stage '$($Stage.Id)' has no package directory."}
             $count=@(Get-ChildItem -LiteralPath $source -Recurse -File -Filter '*.rpm').Count;if($count -eq 0){throw "Track stage '$($Stage.Id)' contains no .rpm artifacts."}
-            if($manager -eq 'dnf'){return Invoke-DistroShelfCommand -WslName $WslName -Command "dnf install -y --disablerepo='*' /track-stage/*.rpm" -CaptureOutput}
-            if($manager -eq 'zypper'){return Invoke-DistroShelfCommand -WslName $WslName -Command "zypper --non-interactive install --no-recommends /track-stage/*.rpm" -CaptureOutput}
+            $mounted="/track-stage/$stageId/packages/*.rpm"
+            if($manager -eq 'dnf'){return Invoke-DistroShelfCommand -WslName $WslName -Command "dnf install -y --disablerepo='*' $mounted" -CaptureOutput}
+            if($manager -eq 'zypper'){return Invoke-DistroShelfCommand -WslName $WslName -Command "zypper --non-interactive install --no-recommends $mounted" -CaptureOutput}
             throw "No RPM local installer is defined for '$manager'."
         }
         'pacman-cache' {
             $source=Join-Path $root 'packages';if(-not(Test-Path $source -PathType Container)){throw "Track stage '$($Stage.Id)' has no package directory."}
             $count=@(Get-ChildItem -LiteralPath $source -Recurse -File -Include '*.pkg.tar.zst','*.pkg.tar.xz','*.pkg.tar.gz','*.pkg.tar').Count;if($count -eq 0){throw "Track stage '$($Stage.Id)' contains no Arch package artifacts."}
-            return Invoke-DistroShelfCommand -WslName $WslName -Command "pacman -U --noconfirm /track-stage/*.pkg.tar.*" -CaptureOutput
+            $mounted="/track-stage/$stageId/packages/*.pkg.tar.*"
+            return Invoke-DistroShelfCommand -WslName $WslName -Command "pacman -U --noconfirm $mounted" -CaptureOutput
         }
         'wsl-path' {
             if([string]$Stage.Id -eq 'flathub'){
@@ -42,7 +46,7 @@ function Install-DistroShelfProfileStageFromTrack {
         }
         'flatpak-sideload' {
             $sideload=Join-Path $root 'sideload';if(-not(Test-Path $sideload -PathType Container)){throw "Track stage '$($Stage.Id)' has no sideload repository."}
-            return Invoke-DistroShelfCommand -WslName $WslName -Command "flatpak install --assumeyes --sideload-repo=/track-stage/sideload '$($Stage.Track.ExportValue)'" -CaptureOutput
+            return Invoke-DistroShelfCommand -WslName $WslName -Command "flatpak install --assumeyes --sideload-repo=/track-stage/$stageId/sideload '$($Stage.Track.ExportValue)'" -CaptureOutput
         }
         default { throw "Unsupported Track export type '$export' for Profile stage '$($Stage.Id)'." }
     }
