@@ -143,12 +143,13 @@ function Test-DistroShelfProviderContract {
             $terminalName = [string]$stage.TerminalName
             $terminalPackage = [string]$stage.TerminalPackage
             $terminalExecutable = [string]$stage.TerminalExecutable
+            $exportType = [string]$stage.Track.ExportType
             if([string]::IsNullOrWhiteSpace($terminalName)) { $errors += "Terminal stage '$id' has no TerminalName." }
             if([string]::IsNullOrWhiteSpace($terminalPackage)) { $errors += "Terminal stage '$id' has no TerminalPackage." }
             if([string]::IsNullOrWhiteSpace($terminalExecutable)) { $errors += "Terminal stage '$id' has no TerminalExecutable." }
             if($terminalName -and $terminalNames.ContainsKey($terminalName)) { $errors += "Duplicate terminal name '$terminalName'." }
             elseif($terminalName) { $terminalNames[$terminalName] = $true }
-            if([string]$stage.ExportType -notin @('apt-cache','rpm-cache','pacman-cache')) { $errors += "Terminal stage '$id' has unsupported export type '$($stage.ExportType)'." }
+            if($exportType -notin @('apt-cache','rpm-cache','pacman-cache')) { $errors += "Terminal stage '$id' has unsupported export type '$exportType'." }
         }
     }
 
