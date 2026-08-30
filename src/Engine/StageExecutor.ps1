@@ -7,7 +7,7 @@ function Invoke-DistroShelfCommand {
     $code=$LASTEXITCODE
     $result=[pscustomobject][ordered]@{ExitCode=$code;Output=(@($output)-join "`n")}
     if($CaptureOutput){return $result}
-    if($code-ne 0){throw "Command failed in '$WslName' with exit code $code: $Command`n$($result.Output)"}
+    if($code-ne 0){throw "Command failed in '$WslName' with exit code ${code}: $Command`n$($result.Output)"}
     return $result
 }
 
