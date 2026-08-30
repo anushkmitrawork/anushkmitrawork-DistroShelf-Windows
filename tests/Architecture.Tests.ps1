@@ -63,4 +63,16 @@ $path=Move-DistroShelfTransactionToTroubleshoot -Transaction $tx -ErrorRecord $e
 if($path -and (Test-Path $path)){Pass 'failed transaction preserved in Troubleshoot'}else{Fail 'failed transaction not preserved'}
 if(Test-Path (Join-Path $path 'marker.txt')){Pass 'Troubleshoot retains failed transaction contents'}else{Fail 'Troubleshoot lost failed transaction contents'}
 
+# Profile artifact identity contract: commit must consume the single export created by ProfileEngine.
+$commitPath=Join-Path $src 'Profile\ProfileCommit.ps1'
+$commitText=Get-Content -LiteralPath $commitPath -Raw
+if($commitText -match '--export'){Fail 'ProfileCommit performs a second WSL export'}else{Pass 'ProfileCommit does not re-export the accepted Profile'}
+if($commitText -match 'BuildResult\.ExportPath'){Pass 'ProfileCommit consumes BuildResult.ExportPath'}else{Fail 'ProfileCommit does not consume BuildResult.ExportPath'}
+if($commitText -match 'artifactHash' -and $commitText -match 'ProfileHash'){Pass 'Profile commit verifies artifact hash against Profile hash'}else{Fail 'Profile artifact identity verification missing'}
+
+$profileEnginePath=Join-Path $src 'Profile\ProfileEngine.ps1'
+$profileEngineText=Get-Content -LiteralPath $profileEnginePath -Raw
+if($profileEngineText -match 'wsl\.exe --export'){Pass 'ProfileEngine creates the single accepted export'}else{Fail 'ProfileEngine has no accepted export step'}
+if($profileEngineText -match 'ExportPath='){Pass 'ProfileEngine returns accepted ExportPath'}else{Fail 'ProfileEngine does not return ExportPath'}
+
 Write-Host "`nAll atomic architecture tests passed."
