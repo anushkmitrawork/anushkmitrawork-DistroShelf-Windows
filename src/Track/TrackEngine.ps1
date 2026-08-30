@@ -63,7 +63,11 @@ function Invoke-DistroShelfTrackBuilder {
 
         $verified=@{};$remaining=@($stages);$stageResults=@();$batchNumber=0
         while($remaining.Count){
-            $ready=@(Get-DistroShelfReadyStages -Stages $remaining -VerifiedHashes $verified)
+            # A dependency becomes eligible only when its predecessor's on-disk hash
+            # record exists and still validates against the predecessor artifact tree.
+            # The in-memory map prevents a stage from being executed twice; it is not
+            # used as a substitute for the persisted verification boundary.
+            $ready=@(Get-DistroShelfReadyStages -Stages $remaining -VerifiedHashes $verified -HashRoot $trackRoot)
             if(!$ready.Count){throw 'Track DAG is blocked: no remaining stage has all required verified hashes.'}
             $batch=@(Select-DistroShelfParallelBatch -ReadyStages $ready -MaxConcurrency $MaxConcurrency)
             if(!$batch.Count){throw 'Track scheduler selected an empty batch.'}
