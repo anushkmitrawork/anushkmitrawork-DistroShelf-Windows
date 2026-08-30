@@ -17,7 +17,9 @@ Pass 'Ubuntu Track runtime functions load successfully'
 $provider=Get-DistroShelfProvider -Distro 'Ubuntu'
 $stages=@($provider.Stages)
 $expected=@('rootfs','podman','distrobox','flatpak','flathub','distroshelf','terminal-gnome-console','terminal-kitty','terminal-alacritty','terminal-foot','terminal-konsole')
-if((@($stages|ForEach-Object Id)|Sort-Object) -join ',' -ne ($expected|Sort-Object) -join ','){Fail 'Ubuntu Track stage set changed'}else{Pass 'Ubuntu Track stage set is complete'}
+$actualStageSet=((@($stages|ForEach-Object {[string]$_.Id})|Sort-Object)-join ',')
+$expectedStageSet=((@($expected)|Sort-Object)-join ',')
+if($actualStageSet -ne $expectedStageSet){Fail "Ubuntu Track stage set changed. Actual: $actualStageSet Expected: $expectedStageSet"}else{Pass 'Ubuntu Track stage set is complete'}
 
 $contract=Test-DistroShelfProviderContract -Provider $provider
 if(-not $contract.Valid){Fail "Ubuntu provider contract invalid: $($contract.Errors -join '; ')"}else{Pass 'Ubuntu provider contract is valid'}
@@ -25,9 +27,12 @@ Test-DistroShelfDag -Stages $stages|Out-Null
 Pass 'Ubuntu dependency DAG is valid'
 
 $byId=@{};foreach($s in $stages){$byId[[string]$s.Id]=$s}
-if((@($byId.distrobox.Depends)-join ',') -ne 'rootfs,podman'){Fail 'Distrobox must wait for rootfs and Podman'}
-if((@($byId.flathub.Depends)|Sort-Object)-join ',' -ne 'flatpak,rootfs'){Fail 'Flathub must wait for rootfs and Flatpak'}
-if((@($byId.distroshelf.Depends)|Sort-Object)-join ',' -ne 'distrobox,flathub,flatpak,rootfs'){Fail 'DistroShelf must wait for core GUI/container prerequisites'}
+$distroboxDepends=((@($byId.distrobox.Depends)|Sort-Object)-join ',')
+$flathubDepends=((@($byId.flathub.Depends)|Sort-Object)-join ',')
+$distroshelfDepends=((@($byId.distroshelf.Depends)|Sort-Object)-join ',')
+if($distroboxDepends -ne 'podman,rootfs'){Fail 'Distrobox must wait for rootfs and Podman'}
+if($flathubDepends -ne 'flatpak,rootfs'){Fail 'Flathub must wait for rootfs and Flatpak'}
+if($distroshelfDepends -ne 'distrobox,flathub,flatpak,rootfs'){Fail 'DistroShelf must wait for core GUI/container prerequisites'}
 Pass 'Ubuntu dependency edges match the intended transaction order'
 
 $terminalMap=@{
