@@ -1,5 +1,6 @@
 # DistroShelf - dependency DAG scheduler
-# Dependency eligibility is derived from hashes; resource locks prevent unsafe races.
+# Core execution is linear and deterministic. Parallel batch helpers remain isolated
+# for the later Parallelism feature block and are not used by Track/Profile Core.
 # The scheduler NEVER marks work verified; only a successful executor may do that.
 
 . (Join-Path $PSScriptRoot 'HashEngine.ps1')
@@ -20,11 +21,34 @@ function Test-DistroShelfDag {
         }
     }
     $remaining=@{};foreach($s in @($Stages)){$remaining[[string]$s.Id]=@($s.Depends).Count}
-    $q=[System.Collections.Generic.Queue[string]]::new();foreach($k in @($remaining.Keys)){if($remaining[$k]-eq 0){$q.Enqueue($k)}}
+    $q=[System.Collections.Generic.Queue[string]]::new();foreach($s in @($Stages)){if($remaining[[string]$s.Id]-eq 0){$q.Enqueue([string]$s.Id)}}
     $count=0
     while($q.Count){$n=$q.Dequeue();$count++;foreach($s in @($Stages)){if(@($s.Depends)-contains $n){$remaining[[string]$s.Id]--;if($remaining[[string]$s.Id]-eq 0){$q.Enqueue([string]$s.Id)}}}}
     if($count-ne @($Stages).Count){throw 'Distro dependency graph contains a cycle.'}
     $true
+}
+
+function Get-DistroShelfLinearExecutionPlan {
+    param([Parameter(Mandatory)][object]$Definition)
+    $stages=@($Definition.Stages)
+    Test-DistroShelfDag -Stages $stages|Out-Null
+    $remaining=[System.Collections.Generic.List[object]]::new()
+    foreach($stage in $stages){$remaining.Add($stage)}
+    $ordered=@()
+    while($remaining.Count){
+        $selected=$null
+        foreach($candidate in @($remaining)){
+            $ready=$true
+            foreach($dependency in @($candidate.Depends)){
+                if(-not(@($ordered|ForEach-Object{[string]$_.Id}) -contains [string]$dependency)){$ready=$false;break}
+            }
+            if($ready){$selected=$candidate;break}
+        }
+        if($null -eq $selected){throw 'DAG is blocked; no deterministic linear stage is eligible.'}
+        $ordered+=,$selected
+        [void]$remaining.Remove($selected)
+    }
+    return $ordered
 }
 
 function Get-DistroShelfStageResourceLock {
@@ -39,8 +63,7 @@ function Get-DistroShelfStageResourceLock {
 
 function Test-DistroShelfPersistedStageHash {
     param([Parameter(Mandatory)][object]$Stage,[Parameter(Mandatory)][string]$HashRoot)
-    $id=[string]$Stage.Id
-    $safe=$id -replace ':','-'
+    $id=[string]$Stage.Id;$safe=$id -replace ':','-'
     $stageRoot=if($id -eq 'rootfs'){Join-Path $HashRoot 'Distro'}else{Join-Path $HashRoot $safe}
     $record=Join-Path (Join-Path $HashRoot 'metadata') "$safe.hash.json"
     if(-not(Test-Path -LiteralPath $stageRoot -PathType Container)){return $false}
@@ -60,12 +83,7 @@ function Get-DistroShelfReadyStages {
             if(-not $VerifiedHashes.ContainsKey($depId)){$dependenciesSatisfied=$false;break}
             if($HashRoot){
                 $depStage=@($Stages|Where-Object{[string]$_.Id -eq $depId}|Select-Object -First 1)
-                if($depStage.Count -eq 0){
-                    # A completed prerequisite is no longer in the remaining-stage list.
-                    # When a persisted hash is available, validate it using a lightweight
-                    # stage descriptor carrying the dependency id.
-                    $depStage=[pscustomobject]@{Id=$depId;Kind=if($depId -eq 'rootfs'){'rootfs'}else{'dependency'}}
-                }else{$depStage=$depStage[0]}
+                if($depStage.Count -eq 0){$depStage=[pscustomobject]@{Id=$depId;Kind=if($depId -eq 'rootfs'){'rootfs'}else{'dependency'}}}else{$depStage=$depStage[0]}
                 if(-not(Test-DistroShelfPersistedStageHash -Stage $depStage -HashRoot $HashRoot)){$dependenciesSatisfied=$false;break}
             }
         }
@@ -74,6 +92,8 @@ function Get-DistroShelfReadyStages {
     return $ready
 }
 
+# Parallel batch helpers are retained as dormant infrastructure for the separate
+# Parallelism feature block. Core Track/Profile execution does not call them.
 function Select-DistroShelfParallelBatch {
     param([Parameter(Mandatory)][object[]]$ReadyStages,[int]$MaxConcurrency=3)
     if($MaxConcurrency-lt 1){throw 'MaxConcurrency must be at least 1.'}
