@@ -18,7 +18,7 @@ function Commit-DistroShelfProfileTransaction {
     New-Item -ItemType Directory -Path $profilesRoot -Force|Out-Null
 
     $journal=[ordered]@{
-        SchemaVersion=2;TransactionId=$BuildResult.Transaction.Id;ProfileId=$candidate.Id;Name=$candidate.Name;
+        SchemaVersion=3;TransactionId=$BuildResult.Transaction.Id;ProfileId=$candidate.Id;Name=$candidate.Name;
         Distro=$candidate.Distro;WslName=$wslName;ProfileHash=$BuildResult.ProfileHash;
         State='Prepare';CreatedAt=[DateTime]::UtcNow.ToString('o')
     }
@@ -30,16 +30,29 @@ function Commit-DistroShelfProfileTransaction {
     Save-Journal
 
     try {
-        # Keep the exported VHDX inside the transaction until every operation that can
-        # still fail has completed. The final Profile directory is created only at the
-        # irreversible promotion boundary.
+        # Export the already-accepted temporary environment exactly once. This export is
+        # the durable payload whose integrity is subsequently verified and whose exact
+        # bytes are promoted to the committed Profile.
         $export=Join-Path $transactionRoot 'profile-export.vhdx'
         & wsl.exe --export $wslName $export --format vhd 2>&1|Out-Null
         if($LASTEXITCODE-ne 0 -or -not(Test-Path -LiteralPath $export -PathType Leaf)){throw "Failed to export verified Profile '$wslName' for commit."}
         $journal.State='Exported';Save-Journal
 
-        # The temporary registration is no longer needed. From this point on, the VHDX
-        # itself is the durable transaction artifact that can be promoted or troubleshot.
+        $exportHash=(Get-FileHash -LiteralPath $export -Algorithm SHA256).Hash.ToLowerInvariant()
+        if([string]::IsNullOrWhiteSpace($exportHash)){throw "Failed to hash exported Profile '$wslName'."}
+        $journal.ExportedVhdxSha256=$exportHash;Save-Journal
+
+        # The build hash must remain tied to the accepted Profile metadata. The payload
+        # hash is recorded separately because the VHDX is the actual committed object.
+        $payloadRecord=[ordered]@{
+            SchemaVersion=1;ProfileId=$candidate.Id;Name=$candidate.Name;Distro=$candidate.Distro;
+            WslName=$wslName;ProfileHash=$BuildResult.ProfileHash;ExportedVhdxSha256=$exportHash;
+            RecordedAt=[DateTime]::UtcNow.ToString('o')
+        }
+        $payloadRecordPath=Join-Path $transactionRoot 'export.hash.json'
+        $payloadRecord|ConvertTo-Json -Depth 20|Set-Content -LiteralPath $payloadRecordPath -Encoding UTF8
+        $journal.State='ExportVerified';Save-Journal
+
         & wsl.exe --unregister $wslName 2>&1|Out-Null
         if($LASTEXITCODE-ne 0){throw "Failed to unregister temporary Profile '$wslName' during commit."}
         $journal.State='TemporaryUnregistered';Save-Journal
@@ -48,10 +61,15 @@ function Commit-DistroShelfProfileTransaction {
         $finalWsl=Join-Path $finalRoot 'wsl';New-Item -ItemType Directory -Path $finalWsl -Force|Out-Null
         $finalVhdx=Join-Path $finalWsl 'ext4.vhdx'
 
-        # Promotion of the durable WSL payload is a single filesystem move. If anything
-        # after this point fails, the final directory is moved back into Troubleshoot.
+        # Promotion of the exact exported artifact is the irreversible filesystem move.
         Move-Item -LiteralPath $export -Destination $finalVhdx -Force
         $journal.State='PayloadPromoted';Save-Journal
+
+        # Verify that the promoted file is byte-identical to the accepted export before WSL
+        # registration. A mismatch aborts the commit and preserves the transaction.
+        $promotedHash=(Get-FileHash -LiteralPath $finalVhdx -Algorithm SHA256).Hash.ToLowerInvariant()
+        if($promotedHash -ne $exportHash){throw "Committed Profile payload hash mismatch for '$wslName'."}
+        $journal.PromotedVhdxSha256=$promotedHash;Save-Journal
 
         & wsl.exe --import-in-place $wslName $finalVhdx 2>&1|Out-Null
         if($LASTEXITCODE-ne 0){throw "Failed to import committed Profile '$wslName' in place."}
@@ -64,9 +82,9 @@ function Commit-DistroShelfProfileTransaction {
         $journal.State='WslSmokeVerified';Save-Journal
 
         $record=[ordered]@{
-            SchemaVersion=1;ProfileId=$candidate.Id;Name=$candidate.Name;Distro=$candidate.Distro;
+            SchemaVersion=2;ProfileId=$candidate.Id;Name=$candidate.Name;Distro=$candidate.Distro;
             WslName=$wslName;PackageManager=$candidate.PackageManager;Terminal=$Terminal;
-            ProfileHash=$BuildResult.ProfileHash;CommittedAt=[DateTime]::UtcNow.ToString('o')
+            ProfileHash=$BuildResult.ProfileHash;ExportedVhdxSha256=$exportHash;CommittedAt=[DateTime]::UtcNow.ToString('o')
         }
         Write-DistroShelfJsonAtomically -Path (Join-Path $finalRoot 'profile.json') -Value $record
 
@@ -76,7 +94,7 @@ function Commit-DistroShelfProfileTransaction {
         $journal.State='Committed';$journal|ConvertTo-Json -Depth 20|Set-Content -LiteralPath $journalPath -Encoding UTF8
 
         Remove-Item -LiteralPath $transactionRoot -Recurse -Force -ErrorAction SilentlyContinue
-        return [pscustomobject][ordered]@{Success=$true;Profile=$committed;Root=$finalRoot;WslName=$wslName;ProfileHash=$BuildResult.ProfileHash}
+        return [pscustomobject][ordered]@{Success=$true;Profile=$committed;Root=$finalRoot;WslName=$wslName;ProfileHash=$BuildResult.ProfileHash;ExportedVhdxSha256=$exportHash}
     } catch {
         # Never leave a partially promoted Profile outside the transaction journal. If the
         # WSL registration exists, unregister it first; then move every remaining artifact
