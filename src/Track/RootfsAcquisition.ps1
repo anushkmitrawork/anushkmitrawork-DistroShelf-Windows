@@ -9,10 +9,12 @@ function Save-DistroShelfAttemptRootfs {
     $extension=if($provider.Url -match '\.wsl(?:\?|$)'){'.wsl'}else{'.tar'}
     $destination=Join-Path $DestinationDirectory ("{0}-{1}{2}" -f $provider.Name,$provider.Architecture,$extension)
 
-    $legacy=Get-DistroShelfLegacyRootfsPath -Distro $Distro
-    if($legacy -and (Test-Path -LiteralPath $legacy -PathType Leaf)){
-        $hash=(Get-FileHash -LiteralPath $legacy -Algorithm SHA256).Hash.ToLowerInvariant()
-        if($hash -eq $provider.Sha256){Copy-Item -LiteralPath $legacy -Destination $destination -Force;return [pscustomobject]@{Path=$destination;Sha256=$hash;Verified=$true;Source='legacy-cache'}}
+    if(Test-Path -LiteralPath $destination -PathType Leaf){
+        $cachedHash=(Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
+        if($cachedHash -eq $provider.Sha256){
+            return [pscustomobject]@{Path=$destination;Sha256=$cachedHash;Verified=$true;Source='attempt-cache'}
+        }
+        Remove-Item -LiteralPath $destination -Force
     }
 
     $partial="$destination.partial"
@@ -32,7 +34,7 @@ function Save-DistroShelfAttemptRootfs {
                     $pkg=Join-Path $work 'distro.appxbundle'
                     Write-Host 'Acquiring the official Microsoft Debian WSL package for the Track attempt...'
                     Invoke-WebRequest -Uri $url -OutFile $pkg -UseBasicParsing -ErrorAction Stop
-                    $tar=Expand-DistroShelfDebianStorePackage -PackagePath $pkg -DestinationDirectory $work
+                    $tar=Expand-DistroShelfPackageToRootfs -PackagePath $pkg -DestinationDirectory $work
                     Copy-Item -LiteralPath $tar -Destination $destination -Force
                     $hash=(Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
                     return [pscustomobject]@{Path=$destination;Sha256=$hash;Verified=$true;Source='Microsoft WSL package fallback'}
