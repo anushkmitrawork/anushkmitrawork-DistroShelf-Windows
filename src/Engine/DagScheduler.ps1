@@ -2,6 +2,8 @@
 # Dependency eligibility is derived from hashes; resource locks prevent unsafe races.
 # The scheduler NEVER marks work verified; only a successful executor may do that.
 
+. (Join-Path $PSScriptRoot 'HashEngine.ps1')
+
 function Test-DistroShelfDag {
     param([Parameter(Mandatory)][object[]]$Stages)
     $ids=@{}
@@ -35,11 +37,31 @@ function Get-DistroShelfStageResourceLock {
     $null
 }
 
+function Test-DistroShelfPersistedStageHash {
+    param([Parameter(Mandatory)][object]$Stage,[Parameter(Mandatory)][string]$HashRoot)
+    $id=[string]$Stage.Id
+    $safe=$id -replace ':','-'
+    $stageRoot=if($id -eq 'rootfs'){Join-Path $HashRoot 'Distro'}else{Join-Path $HashRoot $safe}
+    $record=Join-Path (Join-Path $HashRoot 'metadata') "$safe.hash.json"
+    if(-not(Test-Path -LiteralPath $stageRoot -PathType Container)){return $false}
+    if(-not(Test-Path -LiteralPath $record -PathType Leaf)){return $false}
+    try{return [bool](Test-DistroShelfHashRecord -Path $record -Root $stageRoot -Stage $id)}catch{return $false}
+}
+
 function Get-DistroShelfReadyStages {
-    param([Parameter(Mandatory)][object[]]$Stages,[Parameter(Mandatory)][hashtable]$VerifiedHashes)
+    param([Parameter(Mandatory)][object[]]$Stages,[Parameter(Mandatory)][hashtable]$VerifiedHashes,[string]$HashRoot)
     @($Stages|Where-Object{
-        (-not $VerifiedHashes.ContainsKey([string]$_.Id)) -and
-        (@($_.Depends|Where-Object{-not $VerifiedHashes.ContainsKey([string]$_)}).Count -eq 0)
+        $deps=@($_.Depends)
+        $depsReady=($deps|Where-Object{
+            $depId=[string]$_
+            if(-not $VerifiedHashes.ContainsKey($depId)){return $false}
+            if($HashRoot){
+                $depStage=@($Stages|Where-Object{[string]$_.Id -eq $depId}|Select-Object -First 1)
+                if($depStage -and -not(Test-DistroShelfPersistedStageHash -Stage $depStage -HashRoot $HashRoot)){return $false}
+            }
+            return $true
+        }).Count -eq 0
+        (-not $VerifiedHashes.ContainsKey([string]$_.Id)) -and $depsReady
     })
 }
 
