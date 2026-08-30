@@ -26,16 +26,18 @@ try {
 
     $uRecord=Commit-DistroShelfProfile -Candidate $u -Terminal 'GNOME Console' -ProfileHash ('a'*64)
     $dRecord=Commit-DistroShelfProfile -Candidate $d -Terminal 'Kitty' -ProfileHash ('b'*64)
-    if($uRecord.Status -eq 'Ready' -and $dRecord.Status -eq 'Ready' -and $uRecord.Name -eq 'Ubuntu1' -and $dRecord.Name -eq 'Debian1'){Write-Host 'PASS  Profiles commit independently by distro'}else{Write-Host 'FAIL  independent profile commits';$failed++}
+    if(($uRecord.Status -eq 'Ready') -and ($dRecord.Status -eq 'Ready') -and ($uRecord.Name -eq 'Ubuntu1') -and ($dRecord.Name -eq 'Debian1')){Write-Host 'PASS  Profiles commit independently by distro'}else{Write-Host 'FAIL  independent profile commits';$failed++}
 
     $uFound=Get-DistroShelfProfileById -Id 'u1'
     $dFound=Get-DistroShelfProfileById -Id 'd1'
-    if($uFound.Name -eq 'Ubuntu1' -and $uFound.Terminal -eq 'GNOME Console' -and $dFound.Name -eq 'Debian1' -and $dFound.Terminal -eq 'Kitty'){Write-Host 'PASS  profile identity and terminal metadata persist'}else{Write-Host 'FAIL  profile identity or terminal metadata';$failed++}
+    if(($uFound.Name -eq 'Ubuntu1') -and ($uFound.Terminal -eq 'GNOME Console') -and ($dFound.Name -eq 'Debian1') -and ($dFound.Terminal -eq 'Kitty')){Write-Host 'PASS  profile identity and terminal metadata persist'}else{Write-Host 'FAIL  profile identity or terminal metadata';$failed++}
 
-    if(-not(Test-DistroShelfProfileNameAvailable -WslName 'DistroShelf-Ubuntu1') -and Test-DistroShelfProfileNameAvailable -WslName 'DistroShelf-Ubuntu2'){Write-Host 'PASS  committed WSL names are reserved independently'}else{Write-Host 'FAIL  profile name availability check';$failed++}
+    $ubuntuTaken=(-not(Test-DistroShelfProfileNameAvailable -WslName 'DistroShelf-Ubuntu1'))
+    $ubuntuNext=(Test-DistroShelfProfileNameAvailable -WslName 'DistroShelf-Ubuntu2')
+    if($ubuntuTaken -and $ubuntuNext){Write-Host 'PASS  committed WSL names are reserved independently'}else{Write-Host 'FAIL  profile name availability check';$failed++}
 
     $profiles=@(Get-DistroShelfProfiles)
-    if($profiles.Count -eq 2 -and (@($profiles|ForEach-Object Id)|Select-Object -Unique).Count -eq 2){Write-Host 'PASS  profile records survive round-trip persistence'}else{Write-Host 'FAIL  profile persistence';$failed++}
+    if(($profiles.Count -eq 2) -and ((@($profiles|ForEach-Object Id)|Select-Object -Unique).Count -eq 2)){Write-Host 'PASS  profile records survive round-trip persistence'}else{Write-Host 'FAIL  profile persistence';$failed++}
 }
 finally {
     $script:DistroShelfProfileRoot=$oldRoot
