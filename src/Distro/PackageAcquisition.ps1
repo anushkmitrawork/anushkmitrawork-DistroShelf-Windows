@@ -49,7 +49,7 @@ function New-DistroShelfTerminalStage {
     )
     $stage=New-DistroShelfPackageStage -Id $Id -Manager $Manager -Packages @($PackageName) -Tests @(
         (New-StageTest "$TerminalName-command" "command -v $Executable"),
-        (New-StageTest "$TerminalName-version" "$Executable --version"
+        (New-StageTest "$TerminalName-version" "$Executable --version")
     ) -ParallelGroup 'terminals'
     $stage | Add-Member -NotePropertyName Kind -NotePropertyValue 'terminal' -Force
     $stage | Add-Member -NotePropertyName TerminalName -NotePropertyValue $TerminalName -Force
