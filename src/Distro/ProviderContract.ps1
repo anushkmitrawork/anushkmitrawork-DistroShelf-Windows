@@ -1,4 +1,4 @@
-# DistroShelf - provider contract
+# DistroShelf - distro provider contract
 # A provider describes acquisition/install/test behavior. Engines own scheduling and transaction semantics.
 
 . (Join-Path $PSScriptRoot 'PackageAcquisition.ps1')
@@ -108,6 +108,7 @@ function Test-DistroShelfProviderContract {
     }
 
     $ids = @{}
+    $terminalNames = @{}
     foreach($stage in $stages) {
         $id = [string]$stage.Id
         if(!$id) {
@@ -136,6 +137,18 @@ function Test-DistroShelfProviderContract {
 
         if([string]$stage.ExecutionModel -notin @('SharedBuilder','IsolatedBuilder')) {
             $errors += "Stage '$id' has invalid ExecutionModel."
+        }
+
+        if([string]$stage.Kind -eq 'terminal') {
+            $terminalName = [string]$stage.TerminalName
+            $terminalPackage = [string]$stage.TerminalPackage
+            $terminalExecutable = [string]$stage.TerminalExecutable
+            if([string]::IsNullOrWhiteSpace($terminalName)) { $errors += "Terminal stage '$id' has no TerminalName." }
+            if([string]::IsNullOrWhiteSpace($terminalPackage)) { $errors += "Terminal stage '$id' has no TerminalPackage." }
+            if([string]::IsNullOrWhiteSpace($terminalExecutable)) { $errors += "Terminal stage '$id' has no TerminalExecutable." }
+            if($terminalName -and $terminalNames.ContainsKey($terminalName)) { $errors += "Duplicate terminal name '$terminalName'." }
+            elseif($terminalName) { $terminalNames[$terminalName] = $true }
+            if([string]$stage.ExportType -notin @('apt-cache','rpm-cache','pacman-cache')) { $errors += "Terminal stage '$id' has unsupported export type '$($stage.ExportType)'." }
         }
     }
 
