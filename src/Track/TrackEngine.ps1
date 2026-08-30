@@ -100,20 +100,26 @@ function Invoke-DistroShelfTrackBuilder {
 }
 
 function Commit-DistroShelfTrackTransaction {
-    param([Parameter(Mandatory)]$BuildResult)
+    param(
+        [Parameter(Mandatory)]$BuildResult,
+        [string]$TargetRoot,
+        [scriptblock]$TreeHash = { param($Root) Get-DistroShelfTreeHash -Root $Root -ExcludeRelativePath @('metadata/track.hash.json','metadata/track.json') },
+        [scriptblock]$IntegrityCheck = { param($Distro) Test-DistroShelfTrackIntegrity -Distro $Distro },
+        [scriptblock]$Promote = { param($Source,$Destination) Move-DistroShelfDirectoryAtomic -Source $Source -Destination $Destination },
+        [scriptblock]$Troubleshoot = { param($Transaction,$ErrorRecord) Move-DistroShelfTransactionToTroubleshoot -Transaction $Transaction -ErrorRecord $ErrorRecord }
+    )
     if(-not $BuildResult.Success){throw 'Cannot commit a failed Track transaction.'}
     if([string]::IsNullOrWhiteSpace([string]$BuildResult.FinalHash)){throw 'Cannot commit Track without a final hash.'}
     if(-not(Test-Path -LiteralPath $BuildResult.TrackRoot -PathType Container)){throw 'Cannot commit Track: transaction Track tree is missing.'}
-    $actualHash=Get-DistroShelfTreeHash -Root $BuildResult.TrackRoot -ExcludeRelativePath @('metadata/track.hash.json','metadata/track.json')
-    if($actualHash.ToLowerInvariant() -ne [string]$BuildResult.FinalHash.ToLowerInvariant()){
+    $actualHash=& $TreeHash $BuildResult.TrackRoot
+    if([string]$actualHash -ne [string]$BuildResult.FinalHash.ToLowerInvariant()){
         throw 'Cannot commit Track: transaction tree no longer matches its verified final hash.'
     }
-    $definition=Get-DistroShelfTrackDefinition $BuildResult.Transaction.Distro
-    $target=[IO.Path]::GetFullPath([string]$definition.Root)
+    $target=if($TargetRoot){[IO.Path]::GetFullPath($TargetRoot)}else{[IO.Path]::GetFullPath((Get-DistroShelfTrackDefinition $BuildResult.Transaction.Distro).Root)}
     if(Test-Path -LiteralPath $target){throw "Refusing to overwrite existing Track: $target"}
     try {
-        Move-DistroShelfDirectoryAtomic -Source $BuildResult.TrackRoot -Destination $target
-        if(-not(Test-DistroShelfTrackIntegrity -Distro $BuildResult.Transaction.Distro)){
+        & $Promote $BuildResult.TrackRoot $target
+        if(-not (& $IntegrityCheck $BuildResult.Transaction.Distro)){
             throw "Track integrity verification failed after promotion: $target"
         }
         [pscustomobject][ordered]@{Success=$true;Distro=$BuildResult.Transaction.Distro;Track=(Split-Path -Leaf $target);Root=$target;FinalHash=$BuildResult.FinalHash}
@@ -124,7 +130,7 @@ function Commit-DistroShelfTrackTransaction {
                 Move-DistroShelfDirectoryAtomic -Source $target -Destination $BuildResult.TrackRoot
             } catch {}
         }
-        $tr=Move-DistroShelfTransactionToTroubleshoot -Transaction $BuildResult.Transaction -ErrorRecord $_
+        $tr=& $Troubleshoot $BuildResult.Transaction $_
         throw "Track commit failed; failed attempt preserved at '$tr'. $($_.Exception.Message)"
     }
 }
