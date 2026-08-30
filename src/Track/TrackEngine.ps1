@@ -111,9 +111,20 @@ function Commit-DistroShelfTrackTransaction {
     $definition=Get-DistroShelfTrackDefinition $BuildResult.Transaction.Distro
     $target=[IO.Path]::GetFullPath([string]$definition.Root)
     if(Test-Path -LiteralPath $target){throw "Refusing to overwrite existing Track: $target"}
-    Move-DistroShelfDirectoryAtomic -Source $BuildResult.TrackRoot -Destination $target
-    if(-not(Test-DistroShelfTrackIntegrity -Distro $BuildResult.Transaction.Distro)){
-        throw "Track integrity verification failed after promotion: $target"
+    try {
+        Move-DistroShelfDirectoryAtomic -Source $BuildResult.TrackRoot -Destination $target
+        if(-not(Test-DistroShelfTrackIntegrity -Distro $BuildResult.Transaction.Distro)){
+            throw "Track integrity verification failed after promotion: $target"
+        }
+        [pscustomobject][ordered]@{Success=$true;Distro=$BuildResult.Transaction.Distro;Track=(Split-Path -Leaf $target);Root=$target;FinalHash=$BuildResult.FinalHash}
+    } catch {
+        if(Test-Path -LiteralPath $target -PathType Container -and -not(Test-Path -LiteralPath $BuildResult.TrackRoot)){
+            try {
+                New-Item -ItemType Directory -Path (Split-Path -Parent $BuildResult.TrackRoot) -Force|Out-Null
+                Move-DistroShelfDirectoryAtomic -Source $target -Destination $BuildResult.TrackRoot
+            } catch {}
+        }
+        $tr=Move-DistroShelfTransactionToTroubleshoot -Transaction $BuildResult.Transaction -ErrorRecord $_
+        throw "Track commit failed; failed attempt preserved at '$tr'. $($_.Exception.Message)"
     }
-    [pscustomobject][ordered]@{Success=$true;Distro=$BuildResult.Transaction.Distro;Track=(Split-Path -Leaf $target);Root=$target;FinalHash=$BuildResult.FinalHash}
 }
