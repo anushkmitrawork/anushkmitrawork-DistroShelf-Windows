@@ -12,7 +12,11 @@ function New-DistroShelfPackageStage {
             $export='apt-cache'
         }
         'dnf' {
-            $acquire="mkdir -p /tmp/ds-$Id/packages; dnf -y --refresh --downloadonly --downloaddir=/tmp/ds-$Id/packages install $names"
+            # Prefer DNF5's dedicated download command because --downloadonly uses the
+            # package-manager cache and may remove packages after a later transaction.
+            # Fall back to the DNF4 download plugin when dnf5 is unavailable; the stage
+            # exporter persists the resulting RPMs into the transaction before proceeding.
+            $acquire="mkdir -p /tmp/ds-$Id/packages; if command -v dnf5 >/dev/null 2>&1; then dnf5 download --resolve --alldeps --destdir=/tmp/ds-$Id/packages $names; elif dnf download --resolve --destdir=/tmp/ds-$Id/packages $names; then true; else echo 'DistroShelf requires dnf5 download or the dnf download plugin for durable Track acquisition.' >&2; exit 127; fi"
             $install="dnf -y --disablerepo='*' install /tmp/ds-$Id/packages/*.rpm"
             $profile="dnf -y --disablerepo='*' install /track-stage/$Id/packages/*.rpm"
             $export='rpm-cache'
