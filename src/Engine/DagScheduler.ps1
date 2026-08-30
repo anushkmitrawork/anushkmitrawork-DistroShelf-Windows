@@ -49,6 +49,7 @@ function Select-DistroShelfParallelBatch {
     $batch=@();$locks=@{}
     foreach($stage in @($ReadyStages)){
         if($batch.Count-ge $MaxConcurrency){break}
+        if([string]$stage.ExecutionModel -eq 'SharedBuilder' -and $batch.Count){continue}
         $lock=Get-DistroShelfStageResourceLock -Stage $stage
         if($lock -and $locks.ContainsKey($lock)){continue}
         $batch+=,$stage;if($lock){$locks[$lock]=$true}
@@ -74,7 +75,5 @@ function Get-DistroShelfExecutionBatches {
 function Get-DistroShelfExecutionPlan {
     param([Parameter(Mandatory)][object]$Definition,[int]$MaxConcurrency=3)
     $batches=Get-DistroShelfExecutionBatches -Definition $Definition -MaxConcurrency $MaxConcurrency
-    $plan=@()
-    foreach($batch in $batches){foreach($stage in @($batch)){$plan+=$stage}}
-    return $plan
+    $plan=@();foreach($batch in $batches){foreach($stage in @($batch)){$plan+=$stage}};return $plan
 }
