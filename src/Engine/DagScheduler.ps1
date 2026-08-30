@@ -70,3 +70,11 @@ function Get-DistroShelfExecutionBatches {
     }
     $batches
 }
+
+function Get-DistroShelfExecutionPlan {
+    param([Parameter(Mandatory)][object]$Definition,[int]$MaxConcurrency=3)
+    $batches=Get-DistroShelfExecutionBatches -Definition $Definition -MaxConcurrency $MaxConcurrency
+    $plan=@()
+    foreach($batch in $batches){foreach($stage in @($batch)){$plan+=$stage}}
+    return $plan
+}
