@@ -8,7 +8,7 @@ function New-DistroShelfPackageStage {
         'apt' {
             $acquire="mkdir -p /tmp/ds-$Id/packages; apt-get update; apt-get --download-only -y -o Dir::Cache::archives=/tmp/ds-$Id/packages install $names"
             $install="apt-get -y --no-download -o Dir::Cache::archives=/tmp/ds-$Id/packages install $names"
-            $profile="apt-get -y --no-download /track-stage/$Id/packages/*.deb"
+            $profile="apt-get -y --no-download install /track-stage/$Id/*.deb /track-stage/$Id/packages/*.deb"
             $export='apt-cache'
         }
         'dnf' {
