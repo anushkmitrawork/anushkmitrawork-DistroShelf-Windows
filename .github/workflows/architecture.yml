@@ -19,6 +19,9 @@ jobs:
       - name: Run Profile implementation-only contract tests
         shell: pwsh
         run: ./tests/ProfileImplementationOnly.Tests.ps1
+      - name: Run Track two-level verification contract tests
+        shell: pwsh
+        run: ./tests/TrackVerification.Tests.ps1
       - name: Run current Profile registry tests
         shell: pwsh
         run: ./tests/DistroShelf.Tests.ps1
