@@ -54,9 +54,11 @@ function New-DistroShelfTerminalStage {
         (New-StageTest "$TerminalName-command" "command -v $Executable"),
         (New-StageTest "$TerminalName-version" "$Executable --version")
     ) -ParallelGroup 'terminals'
-    $stage.Kind='terminal'
-    $stage.TerminalName=$TerminalName
-    $stage.TerminalPackage=$PackageName
-    $stage.TerminalExecutable=$Executable
+    # PSCustomObject is intentionally used by the stage contracts; add terminal-specific
+    # fields as members instead of assignment so PowerShell 7 does not reject new properties.
+    $stage | Add-Member -NotePropertyName Kind -NotePropertyValue 'terminal' -Force
+    $stage | Add-Member -NotePropertyName TerminalName -NotePropertyValue $TerminalName -Force
+    $stage | Add-Member -NotePropertyName TerminalPackage -NotePropertyValue $PackageName -Force
+    $stage | Add-Member -NotePropertyName TerminalExecutable -NotePropertyValue $Executable -Force
     return $stage
 }
