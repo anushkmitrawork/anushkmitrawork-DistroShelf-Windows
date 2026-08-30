@@ -22,7 +22,7 @@ foreach($distro in $distros){
         if(@($stage.Profile.Install).Count -eq 0 -and [string]$stage.Track.ExportType -notin @('wsl-path','flatpak-sideload')){Fail "$distro/$id has neither Profile implementation commands nor an artifact-backed Profile installer"}
         if($stage.Profile.PSObject.Properties.Name -contains 'Acquire'){Fail "$distro/$id incorrectly exposes Profile acquisition"}
     }
-    Pass "$distro: Track acquires; Track implements; Profile only implements"
+    Pass "${distro}: Track acquires; Track implements; Profile only implements"
 }
 
 Write-Host "`nTrack/Profile responsibility contract tests passed."
