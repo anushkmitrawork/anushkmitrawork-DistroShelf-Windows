@@ -11,6 +11,7 @@ function Pass($m){Write-Host "PASS  $m"};function Fail($m){Write-Host "FAIL  $m"
 . (Join-Path $src 'Distro\Registry.ps1')
 . (Join-Path $src 'Profile\ProfileArtifactInstaller.ps1')
 
+$requiredTerminals=@('GNOME Console','Kitty','Alacritty','Foot','Konsole')
 foreach($d in @('Ubuntu','Debian','Fedora','Arch Linux','openSUSE')){
     $provider=Get-DistroShelfProvider $d
     $stages=@($provider.Stages)
@@ -21,7 +22,17 @@ foreach($d in @('Ubuntu','Debian','Fedora','Arch Linux','openSUSE')){
     $validation=@(Invoke-DistroShelfDefinitionValidation|Where-Object Distro -eq $d|Where-Object{-not $_.Valid})
     if($validation.Count){Fail "definition validation: $d"}
     foreach($s in @($stages|Where-Object Id -ne 'rootfs')){Test-DistroShelfProfileInstallCommands -Stage $s|Out-Null}
+    $terminalStages=@($stages|Where-Object{[string]$_.Kind -eq 'terminal'})
+    foreach($terminal in $requiredTerminals){
+        $matches=@($terminalStages|Where-Object{[string]$_.TerminalName -eq $terminal})
+        if($matches.Count -ne 1){Fail "terminal matrix for $d: expected exactly one '$terminal' stage"}
+        $stage=$matches[0]
+        if([string]::IsNullOrWhiteSpace([string]$stage.TerminalPackage)){Fail "terminal matrix for $d/$terminal: missing package"}
+        if([string]::IsNullOrWhiteSpace([string]$stage.TerminalExecutable)){Fail "terminal matrix for $d/$terminal: missing executable"}
+        if([string]$stage.ExecutionModel -ne 'SharedBuilder'){Fail "terminal matrix for $d/$terminal: unexpected execution model"}
+    }
     Pass "Distro provider valid and Profile commands are offline: $d"
+    Pass "Track contains complete terminal matrix: $d"
 }
 
 $stages=@(
@@ -63,7 +74,6 @@ $path=Move-DistroShelfTransactionToTroubleshoot -Transaction $tx -ErrorRecord $e
 if($path -and (Test-Path $path)){Pass 'failed transaction preserved in Troubleshoot'}else{Fail 'failed transaction not preserved'}
 if(Test-Path (Join-Path $path 'marker.txt')){Pass 'Troubleshoot retains failed transaction contents'}else{Fail 'Troubleshoot lost failed transaction contents'}
 
-# Profile artifact identity contract: commit must consume the single export created by ProfileEngine.
 $commitPath=Join-Path $src 'Profile\ProfileCommit.ps1'
 $commitText=Get-Content -LiteralPath $commitPath -Raw
 if($commitText -match '--export'){Fail 'ProfileCommit performs a second WSL export'}else{Pass 'ProfileCommit does not re-export the accepted Profile'}
