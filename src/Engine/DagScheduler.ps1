@@ -1,5 +1,6 @@
 # DistroShelf - dependency DAG scheduler
-# Scheduling is derived from declared prerequisites and optional resource locks.
+# The scheduler derives safe execution batches from prerequisites and optional resource locks.
+# Actual stage execution remains the responsibility of the caller.
 
 function Test-DistroShelfDag {
     param([Parameter(Mandatory)][object[]]$Stages)
@@ -25,57 +26,42 @@ function Test-DistroShelfDag {
 }
 
 function Get-DistroShelfReadyStages {
-    param([Parameter(Mandatory)][object[]]$Stages,[Parameter(Mandatory)][hashtable]$VerifiedHashes,[hashtable]$Running=@{})
+    param([Parameter(Mandatory)][object[]]$Stages,[Parameter(Mandatory)][hashtable]$VerifiedHashes)
     @($Stages|Where-Object{
         $id=[string]$_.Id
-        (-not $VerifiedHashes.ContainsKey($id)) -and (-not $Running.ContainsKey($id)) -and
+        (-not $VerifiedHashes.ContainsKey($id)) -and
         (@($_.Depends|Where-Object{-not $VerifiedHashes.ContainsKey([string]$_)}).Count -eq 0)
     })
 }
 
-function Get-DistroShelfExecutionPlan {
-    param([Parameter(Mandatory)][object]$Definition)
-    $stages=@($Definition.Stages);Test-DistroShelfDag -Stages $stages|Out-Null
-    $completed=@{};$plan=@()
-    while($completed.Count-lt$stages.Count){
-        $ready=@(Get-DistroShelfReadyStages -Stages $stages -VerifiedHashes $completed)
-        if(!$ready.Count){throw 'DAG is blocked; required prerequisite stages are missing or the graph is cyclic.'}
-        $plan+=,([pscustomobject]@{Stages=$ready})
-        foreach($s in $ready){$completed[[string]$s.Id]=$true}
+function Select-DistroShelfParallelBatch {
+    param([Parameter(Mandatory)][object[]]$ReadyStages,[int]$MaxConcurrency=3)
+    if($MaxConcurrency-lt 1){throw 'MaxConcurrency must be at least 1.'}
+    $batch=@();$locks=@{}
+    foreach($stage in @($ReadyStages)){
+        if($batch.Count-ge $MaxConcurrency){break}
+        $lock=[string]$stage.ResourceLock
+        if($lock-and-$locks.ContainsKey($lock)){continue}
+        $batch+=,$stage
+        if($lock){$locks[$lock]=$true}
     }
-    $plan
+    if(-not $batch.Count){$batch=@($ReadyStages|Select-Object -First 1)}
+    return $batch
 }
 
-function Invoke-DistroShelfDag {
-    param(
-        [Parameter(Mandatory)][object[]]$Stages,
-        [Parameter(Mandatory)][hashtable]$VerifiedHashes,
-        [Parameter(Mandatory)][scriptblock]$InvokeStage,
-        [int]$MaxConcurrency=3
-    )
-    Test-DistroShelfDag -Stages $Stages|Out-Null
-    if($MaxConcurrency-lt 1){throw 'MaxConcurrency must be at least 1.'}
-    $done=$VerifiedHashes; $remaining=@($Stages|Where-Object{-not $done.ContainsKey([string]$_.Id)})
+function Get-DistroShelfExecutionBatches {
+    param([Parameter(Mandatory)][object]$Definition,[int]$MaxConcurrency=3)
+    $stages=@($Definition.Stages);Test-DistroShelfDag -Stages $stages|Out-Null
+    $completed=@{};$remaining=@($stages);$batches=@()
     while($remaining.Count){
-        $ready=@(Get-DistroShelfReadyStages -Stages $remaining -VerifiedHashes $done)
-        if(!$ready.Count){throw 'DAG is blocked because a required prerequisite hash is unavailable.'}
-        # Run independent stages concurrently, bounded by MaxConcurrency. Resource locks are
-        # respected so future distro definitions can prevent unsafe overlap without scheduler changes.
-        $batch=@();$locks=@{}
-        foreach($stage in $ready){
-            $lock=[string]$stage.ResourceLock
-            if($batch.Count-ge $MaxConcurrency){break}
-            if($lock-and-$locks.ContainsKey($lock)){continue}
-            $batch+=,$stage;if($lock){$locks[$lock]=$true}
-        }
-        if(-not $batch.Count){$batch=@($ready|Select-Object -First 1)}
-        foreach($stage in $batch){
-            $result=&$InvokeStage $stage
-            $hash=[string]$result.Hash
-            if([string]::IsNullOrWhiteSpace($hash)){throw "Stage '$($stage.Id)' completed without producing a verified hash."}
-            $done[[string]$stage.Id]=$hash
-            $remaining=@($remaining|Where-Object{[string]$_.Id-ne [string]$stage.Id})
-        }
+        $ready=@(Get-DistroShelfReadyStages -Stages $remaining -VerifiedHashes $completed)
+        if(!$ready.Count){throw 'DAG is blocked because required prerequisite stages cannot become verified.'}
+        $batch=@(Select-DistroShelfParallelBatch -ReadyStages $ready -MaxConcurrency $MaxConcurrency)
+        $batches+=,[object[]]$batch
+        # Planning only: a stage in the batch is treated as complete solely for planning the
+        # next dependency wave. The execution engine must create the real hashes before running it.
+        foreach($stage in $batch){$completed[[string]$stage.Id]='PLANNED'}
+        $remaining=@($remaining|Where-Object{[string]$batch.Id -notcontains [string]$_.Id})
     }
-    return $done
+    return $batches
 }
