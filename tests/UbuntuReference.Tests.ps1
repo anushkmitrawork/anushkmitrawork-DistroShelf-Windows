@@ -31,18 +31,26 @@ $terminalStages=@($stages|Where-Object Kind -eq 'terminal')
 if($terminalStages.Count -ne 5){Fail "Ubuntu must carry 5 terminal Track stages, found $($terminalStages.Count)"}else{Pass 'Ubuntu Track carries all five terminal preferences'}
 foreach($stage in $terminalStages){
     if([string]$stage.Depends[0] -ne 'rootfs'){Fail "Ubuntu terminal '$($stage.TerminalName)' does not wait for rootfs"}
-    if([string]$stage.TerminalExecutable -ne ([string](@{'GNOME Console'='kgx';'Kitty'='kitty';'Alacritty'='alacritty';'Foot'='foot';'Konsole'='konsole'}[[string]$stage.TerminalName]))){Fail "Ubuntu terminal executable mismatch for '$($stage.TerminalName)'"}
-    if([string]$stage.Track.Acquire -notmatch 'apt-get --download-only'){Fail "Ubuntu terminal '$($stage.TerminalName)' does not use durable apt acquisition"}
+    $expectedExecutable=@{'GNOME Console'='kgx';'Kitty'='kitty';'Alacritty'='alacritty';'Foot'='foot';'Konsole'='konsole'}[[string]$stage.TerminalName]
+    if([string]$stage.TerminalExecutable -ne [string]$expectedExecutable){Fail "Ubuntu terminal executable mismatch for '$($stage.TerminalName)'"}
+    if([string]$stage.Track.Acquire -notmatch 'apt-get --download-only'){Fail "Ubuntu terminal '$($stage.TerminalName)' does not use Track download-only acquisition"}
+    if(@($stage.Track.Tests|ForEach-Object Command|Where-Object {$_ -match 'command -v|--version'}).Count -lt 2){Fail "Ubuntu terminal '$($stage.TerminalName)' lacks command/version verification"}
     Test-DistroShelfProfileInstallCommands -Stage $stage|Out-Null
 }
-Pass 'Ubuntu terminal stages have Track acquisition plus offline Profile installation'
+Pass 'Ubuntu terminal stages download all choices and verify usability before hashing'
 
 foreach($id in @('podman','distrobox','flatpak')){
     $stage=$byId[$id]
     if([string]$stage.Track.Acquire -notmatch 'apt-get --download-only'){Fail "Ubuntu '$id' Track stage does not download artifacts"}
+    if(@($stage.Track.Tests).Count -lt 3){Fail "Ubuntu '$id' Track stage does not have a multi-level verification suite"}
     Test-DistroShelfProfileInstallCommands -Stage $stage|Out-Null
 }
-Pass 'Ubuntu core package stages separate Track download from Profile install'
+if(@($byId['distrobox'].Track.Tests|ForEach-Object Command|Where-Object {$_ -eq 'distrobox list'}).Count -ne 1){Fail 'Ubuntu Distrobox stage is missing the functional list check'}else{Pass 'Ubuntu Distrobox stage has a functional command check'}
+Pass 'Ubuntu core stages separate durable acquisition from functional verification and offline Profile installation'
+
+$fl=$byId['flathub']
+if([string]$fl.Track.Acquire -notmatch 'curl -fsSL https://dl.flathub.org/repo/flathub.flatpakrepo'){Fail 'Ubuntu Flathub stage does not acquire the official repository descriptor'}
+if(@($fl.Track.Tests|ForEach-Object Command|Where-Object {$_ -match 'flatpak remotes'}).Count -lt 1){Fail 'Ubuntu Flathub stage lacks remote verification'}else{Pass 'Ubuntu Flathub stage verifies the acquired repository state'}
 
 $ds=$byId['distroshelf']
 if([string]$ds.Track.ExportType -ne 'flatpak-sideload'){Fail 'Ubuntu DistroShelf stage is not exported as a sideload artifact'}else{Pass 'Ubuntu DistroShelf is captured as a reusable Flatpak sideload artifact'}
