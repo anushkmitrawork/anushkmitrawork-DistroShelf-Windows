@@ -22,3 +22,6 @@ jobs:
       - name: Run Ubuntu reference tests
         shell: pwsh
         run: ./tests/UbuntuReference.Tests.ps1
+      - name: Run Ubuntu execution-boundary tests
+        shell: pwsh
+        run: ./tests/UbuntuExecution.Tests.ps1
