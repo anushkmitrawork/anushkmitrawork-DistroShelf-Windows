@@ -2,6 +2,7 @@ $ErrorActionPreference='Stop'
 $root=Split-Path -Parent $PSScriptRoot
 $src=Join-Path $root 'src'
 . (Join-Path $src 'Distro\Registry.ps1')
+. (Join-Path $src 'DistroTrackManager.ps1')
 . (Join-Path $src 'Engine\DefinitionValidator.ps1')
 . (Join-Path $src 'Engine\DagScheduler.ps1')
 . (Join-Path $src 'Profile\ProfileArtifactInstaller.ps1')
