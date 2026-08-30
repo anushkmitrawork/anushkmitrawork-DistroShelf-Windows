@@ -14,7 +14,6 @@ function Install-DistroShelfProfileStageFromTrack {
     $export=[string]$Stage.Track.ExportType
     $manager=[string]$Stage.PackageManager
     $stageId=([string]$Stage.Id -replace ':','-')
-    $remotePattern='(^|[;&|`n\r]|\s)(curl|wget|Invoke-WebRequest|git\s+clone|apt(-get)?\s+.*https?://|dnf\s+.*https?://|zypper\s+.*https?://|pacman\s+.*https?://|flatpak\s+install\s+.*https?://)'
     switch($export){
         'apt-cache' {
             $source=Join-Path $root 'packages';if(-not(Test-Path $source -PathType Container)){throw "Track stage '$($Stage.Id)' has no package directory."}
@@ -55,6 +54,7 @@ function Install-DistroShelfProfileStageFromTrack {
 
 function Test-DistroShelfProfileInstallCommands {
     param([Parameter(Mandatory)][object]$Stage)
+    $remotePattern='(^|[;&|`n\r]|\s)(curl|wget|Invoke-WebRequest|git\s+clone|apt(-get)?\s+.*https?://|dnf\s+.*https?://|zypper\s+.*https?://|pacman\s+.*https?://|flatpak\s+install\s+.*https?://)'
     foreach($cmd in @($Stage.Profile.Install)){
         if([string]$cmd -match $remotePattern){throw "Profile stage '$($Stage.Id)' contains a network acquisition command; Profile installation must consume Track artifacts only."}
     }
