@@ -15,6 +15,11 @@ if(-not(Get-Command Export-DistroShelfTrackStageArtifact -ErrorAction SilentlyCo
 Pass 'Ubuntu Track runtime functions load successfully'
 
 $provider=Get-DistroShelfProvider -Distro 'Ubuntu'
+$trackDefinition=Get-DistroShelfTrackDefinition -Distro 'Ubuntu'
+if($trackDefinition.Name -ne 'Ubuntu0'){Fail "Ubuntu reference Track name changed: $($trackDefinition.Name)"}
+if([string]::IsNullOrWhiteSpace([string]$trackDefinition.Root)){Fail 'Ubuntu reference Track root is missing.'}
+Pass 'Ubuntu reference Track boundary is stable'
+
 $stages=@($provider.Stages)
 $expected=@('rootfs','podman','distrobox','flatpak','flathub','distroshelf','terminal-gnome-console','terminal-kitty','terminal-alacritty','terminal-foot','terminal-konsole')
 $actualStageSet=((@($stages|ForEach-Object {[string]$_.Id})|Sort-Object)-join ',')
