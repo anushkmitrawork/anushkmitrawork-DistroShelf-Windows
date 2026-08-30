@@ -46,6 +46,8 @@ function Invoke-DistroShelfTrackStage {
 function Invoke-DistroShelfTrackBuilder {
     param([Parameter(Mandatory)][string]$Distro,[int]$MaxConcurrency=3,[scriptblock]$OnProgress)
     $provider=Get-DistroShelfProvider -Distro $Distro
+    $stages=@($provider.Stages)
+    Test-DistroShelfDag -Stages $stages|Out-Null
     $tx=New-DistroShelfTransaction -Kind Track -Distro $Distro
     $trackRoot=Join-Path $tx.Root 'Track';$distroRoot=Join-Path $trackRoot 'Distro'
     New-Item -ItemType Directory -Path $trackRoot,$distroRoot,(Join-Path $trackRoot 'metadata'),(Join-Path $trackRoot 'Terminals') -Force|Out-Null
@@ -59,21 +61,31 @@ function Invoke-DistroShelfTrackBuilder {
         $candidate=[pscustomobject]@{Id=$tx.Id;WslName=$builderName;Distro=$Distro;Name="$Distro-TrackBuilder"}
         Invoke-DistroShelfWslImport -Profile $candidate -RootfsPath $rootfs.Path -ExpectedSha256 $rootfs.Sha256 -StorageRoot (Join-Path $tx.Root 'Wsl')|Out-Null
 
-        $verified=@{};$stageResults=@()
-        $batches=Get-DistroShelfExecutionBatches -Definition $provider -MaxConcurrency $MaxConcurrency
-        $batchNumber=0
-        foreach($batch in @($batches)){
-            $batchNumber++;$batch=@($batch);$label=($batch|ForEach-Object{[string]$_.Id}) -join ', '
-            if($OnProgress){&$OnProgress ([Math]::Min(82,(20+($batchNumber*8)))) "Executing Track batch $batchNumber: $label"}
-            # Batches are scheduler-selected and resource-lock safe. The WSL builder itself
-            # is mutable shared state, so actual concurrent mutation is deliberately disabled
-            # until a provider stage declares IsolatedExecution=$true. This preserves atomicity.
-            foreach($stage in $batch){
+        # IMPORTANT: stage eligibility is recalculated after every successful stage.
+        # The next stage is never considered ready from a planned/synthetic hash.
+        $verified=@{};$remaining=@($stages);$stageResults=@();$batchNumber=0
+        while($remaining.Count){
+            $ready=@(Get-DistroShelfReadyStages -Stages $remaining -VerifiedHashes $verified)
+            if(!$ready.Count){throw 'Track DAG is blocked: no remaining stage has all required verified hashes.'}
+            $batch=@(Select-DistroShelfParallelBatch -ReadyStages $ready -MaxConcurrency $MaxConcurrency)
+            if(!$batch.Count){throw 'Track scheduler selected an empty batch.'}
+            $batchNumber++;$label=($batch|ForEach-Object{[string]$_.Id}) -join ', '
+            if($OnProgress){&$OnProgress ([Math]::Min(82,(20+($batchNumber*8)))) "Executing verified batch $batchNumber: $label"}
+
+            # SharedBuilder stages are intentionally serial. IsolatedBuilder concurrency
+            # is reserved for stages that explicitly own independent execution state.
+            foreach($stage in @($batch)){
+                if([string]$stage.ExecutionModel -eq 'IsolatedBuilder'){
+                    # The current Track builder does not yet provide isolated per-stage WSL
+                    # environments, so do not execute this as shared mutable work by accident.
+                    throw "Stage '$($stage.Id)' declares IsolatedBuilder, but Track builder isolation is not configured."
+                }
                 $result=Invoke-DistroShelfTrackStage -Distro $Distro -Stage $stage -BuilderName $builderName -TrackRoot $trackRoot -DistroRoot $distroRoot
-                $verified[[string]$result.Id]=$result.Hash;$stageResults+=$result
+                if([string]::IsNullOrWhiteSpace([string]$result.Hash)){throw "Track stage '$($result.Id)' completed without a verified hash."}
+                $verified[[string]$result.Id]=$result.Hash
+                $stageResults+=$result
+                $remaining=@($remaining|Where-Object{[string]$_.Id-ne [string]$result.Id})
             }
-            $missing=@($batch|Where-Object{-not $verified.ContainsKey([string]$_.Id)})
-            if($missing.Count){throw "Track batch completed without verified hashes: $($missing.Id -join ', ')"}
         }
 
         if($OnProgress){&$OnProgress 85 'Running final Track acceptance tests...'}
@@ -81,7 +93,7 @@ function Invoke-DistroShelfTrackBuilder {
         if(-not $final.Passed){throw "Final Track acceptance failed for '$Distro'."}
         $finalHash=Get-DistroShelfTreeHash -Root $trackRoot -ExcludeRelativePath @('metadata/track.hash.json','metadata/track.json')
         Write-DistroShelfHashRecord -Path (Join-Path (Join-Path $trackRoot 'metadata') 'track.hash.json') -Stage 'track' -Hash $finalHash -TestResult $final|Out-Null
-        $manifest=[ordered]@{SchemaVersion=5;Distro=$Distro;Track=$provider.Track;PackageManager=$provider.PackageManager;FinalHash=$finalHash;Stages=($stageResults|ForEach-Object{[pscustomobject]@{Id=$_.Id;Hash=$_.Hash;Tests=$_.Tests}});CreatedAt=[DateTime]::UtcNow.ToString('o')}
+        $manifest=[ordered]@{SchemaVersion=6;Distro=$Distro;Track=$provider.Track;PackageManager=$provider.PackageManager;FinalHash=$finalHash;Stages=($stageResults|ForEach-Object{[pscustomobject]@{Id=$_.Id;Hash=$_.Hash;Tests=$_.Tests}});CreatedAt=[DateTime]::UtcNow.ToString('o')}
         $manifest|ConvertTo-Json -Depth 30|Set-Content -LiteralPath (Join-Path $trackRoot 'metadata\track.json') -Encoding UTF8
         try{& wsl.exe --terminate $builderName 2>$null|Out-Null}catch{};try{& wsl.exe --unregister $builderName 2>$null|Out-Null}catch{}
         if($OnProgress){&$OnProgress 100 "Track $Distro verified; ready for atomic commit."}
