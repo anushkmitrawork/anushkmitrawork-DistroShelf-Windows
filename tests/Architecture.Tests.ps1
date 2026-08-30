@@ -9,6 +9,7 @@ function Pass($m){Write-Host "PASS  $m"};function Fail($m){Write-Host "FAIL  $m"
 . (Join-Path $src 'Engine\DefinitionValidator.ps1')
 . (Join-Path $src 'Engine\WorkerExecutor.ps1')
 . (Join-Path $src 'Distro\Registry.ps1')
+. (Join-Path $src 'DistroTrackManager.ps1')
 . (Join-Path $src 'Profile\ProfileArtifactInstaller.ps1')
 
 $requiredTerminals=@('GNOME Console','Kitty','Alacritty','Foot','Konsole')
@@ -65,6 +66,24 @@ try{
   if(-not(Test-DistroShelfHashRecord -Path $record -Root $temp -Stage 'stage' -ExcludeRelativePath @('metadata'))){Pass 'tampering invalidates hash'}else{Fail 'tampering did not invalidate hash'}
 }
 finally{Remove-Item $temp -Recurse -Force -ErrorAction SilentlyContinue}
+
+$tx=New-DistroShelfTransaction -Kind Track -Distro Debian
+$ptx=New-DistroShelfTransaction -Kind Profile -Distro Debian
+try {
+  if($tx.Kind -ne 'Track' -or $ptx.Kind -ne 'Profile'){Fail 'transaction kinds are not distinct'}
+  if($tx.Root -eq $ptx.Root){Fail 'Track and Profile transactions share an attempt root'}
+  if((Split-Path $tx.Root -Leaf) -notmatch '^Track-Debian-'){Fail 'Track transaction root is not Track-scoped'}
+  if((Split-Path $ptx.Root -Leaf) -notmatch '^Profile-Debian-'){Fail 'Profile transaction root is not Profile-scoped'}
+  $trackDefinition=Get-DistroShelfTrackDefinition 'Debian'
+  $profileDefinition=Get-DistroShelfProfileDefinition 'Debian'
+  if($trackDefinition.Root -eq $script:DistroShelfProfileRoot){Fail 'Track committed root overlaps Profile committed root'}
+  if($trackDefinition.Root -eq $ptx.Root -or $profileDefinition.WslBaseName -eq (Split-Path $tx.Root -Leaf)){Fail 'Track/Profile committed and attempt state are mixed'}
+  Pass 'Track and Profile have separate transaction identities and attempt roots'
+  Pass 'Track and Profile committed stores are distinct'
+}
+finally {
+  Remove-Item $tx.Root,$ptx.Root -Recurse -Force -ErrorAction SilentlyContinue
+}
 
 $tx=New-DistroShelfTransaction -Kind Track -Distro Debian
 if(Test-Path $tx.Root){Pass 'transaction creates isolated attempt root'}else{Fail 'transaction root missing'}
