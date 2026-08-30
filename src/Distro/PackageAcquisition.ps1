@@ -8,7 +8,7 @@ function New-DistroShelfPackageStage {
         'apt' {
             $acquire="mkdir -p /tmp/ds-$Id/packages; apt-get update; apt-get --download-only -y -o Dir::Cache::archives=/tmp/ds-$Id/packages install $names"
             $install="apt-get -y --no-download -o Dir::Cache::archives=/tmp/ds-$Id/packages install $names"
-            $profile="apt-get -y --no-download install /track-stage/$Id/*.deb /track-stage/$Id/packages/*.deb"
+            $profile="apt-get -y --no-download install /track-stage/$Id/packages/*.deb"
             $export='apt-cache'
         }
         'dnf' {
@@ -36,4 +36,23 @@ function New-DistroShelfPackageStage {
         Track=[pscustomobject][ordered]@{Acquire=@($acquire);Install=@($install);Tests=@($Tests);ExportType=$export;ExportValue=''}
         Profile=[pscustomobject][ordered]@{Install=@($profile);Tests=@($Tests)}
     }
+}
+
+function New-DistroShelfTerminalStage {
+    param(
+        [Parameter(Mandatory)][string]$Id,
+        [Parameter(Mandatory)][string]$Manager,
+        [Parameter(Mandatory)][string]$TerminalName,
+        [Parameter(Mandatory)][string]$PackageName,
+        [Parameter(Mandatory)][string]$Executable
+    )
+    $stage=New-DistroShelfPackageStage -Id $Id -Manager $Manager -Packages @($PackageName) -Tests @(
+        (New-StageTest "$TerminalName-command" "command -v $Executable"),
+        (New-StageTest "$TerminalName-version" "$Executable --version")
+    ) -ParallelGroup 'terminals'
+    $stage.Kind='terminal'
+    $stage.TerminalName=$TerminalName
+    $stage.TerminalPackage=$PackageName
+    $stage.TerminalExecutable=$Executable
+    return $stage
 }
