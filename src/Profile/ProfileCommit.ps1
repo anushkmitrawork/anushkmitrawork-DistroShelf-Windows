@@ -1,48 +1,93 @@
 # DistroShelf - Profile commit boundary
+# The committed Profile registry is updated only after the exported WSL environment
+# has been re-registered and passed a post-commit smoke test.
 . (Join-Path $PSScriptRoot '..\Engine\AtomicCommit.ps1')
 . (Join-Path $PSScriptRoot '..\ProfileManager.ps1')
 
 function Commit-DistroShelfProfileTransaction {
     param([Parameter(Mandatory)]$BuildResult,[Parameter(Mandatory)]$Reservation,[Parameter(Mandatory)][string]$Terminal)
     if(-not $BuildResult.Success){throw 'Cannot commit a failed Profile transaction.'}
+    if([string]::IsNullOrWhiteSpace([string]$BuildResult.ProfileHash)){throw 'Cannot commit Profile without a final Profile hash.'}
+
     $candidate=$BuildResult.Candidate
-    $candidateRoot=$BuildResult.Transaction.Root
+    $transactionRoot=$BuildResult.Transaction.Root
     $wslName=[string]$candidate.WslName
     $profilesRoot=Join-Path $env:LOCALAPPDATA 'DistroShelf\profiles'
     $finalRoot=Join-Path $profilesRoot ([string]$candidate.Name)
     if(Test-Path -LiteralPath $finalRoot){throw "Committed Profile already exists: $finalRoot"}
     New-Item -ItemType Directory -Path $profilesRoot -Force|Out-Null
 
-    $journal=[ordered]@{SchemaVersion=1;TransactionId=$BuildResult.Transaction.Id;ProfileId=$candidate.Id;Name=$candidate.Name;Distro=$candidate.Distro;WslName=$wslName;ProfileHash=$BuildResult.ProfileHash;State='Prepare';CreatedAt=[DateTime]::UtcNow.ToString('o')}
-    $journalPath=Join-Path $candidateRoot 'commit-journal.json'
-    $journal|ConvertTo-Json -Depth 20|Set-Content -LiteralPath $journalPath -Encoding UTF8
+    $journal=[ordered]@{
+        SchemaVersion=2;TransactionId=$BuildResult.Transaction.Id;ProfileId=$candidate.Id;Name=$candidate.Name;
+        Distro=$candidate.Distro;WslName=$wslName;ProfileHash=$BuildResult.ProfileHash;
+        State='Prepare';CreatedAt=[DateTime]::UtcNow.ToString('o')
+    }
+    $journalPath=Join-Path $transactionRoot 'commit-journal.json'
+
+    function Save-Journal {
+        $journal|ConvertTo-Json -Depth 20|Set-Content -LiteralPath $journalPath -Encoding UTF8
+    }
+    Save-Journal
+
     try {
-        $finalWsl=Join-Path $finalRoot 'wsl';New-Item -ItemType Directory -Path $finalWsl -Force|Out-Null
-        $export=Join-Path $candidateRoot 'profile-export.vhdx'
+        # Keep the exported VHDX inside the transaction until every operation that can
+        # still fail has completed. The final Profile directory is created only at the
+        # irreversible promotion boundary.
+        $export=Join-Path $transactionRoot 'profile-export.vhdx'
         & wsl.exe --export $wslName $export --format vhd 2>&1|Out-Null
         if($LASTEXITCODE-ne 0 -or -not(Test-Path -LiteralPath $export -PathType Leaf)){throw "Failed to export verified Profile '$wslName' for commit."}
-        $finalVhdx=Join-Path $finalWsl 'ext4.vhdx'
-        Copy-Item -LiteralPath $export -Destination $finalVhdx -Force
-        $journal.State='Exported';$journal|ConvertTo-Json -Depth 20|Set-Content $journalPath -Encoding UTF8
+        $journal.State='Exported';Save-Journal
 
+        # The temporary registration is no longer needed. From this point on, the VHDX
+        # itself is the durable transaction artifact that can be promoted or troubleshot.
         & wsl.exe --unregister $wslName 2>&1|Out-Null
         if($LASTEXITCODE-ne 0){throw "Failed to unregister temporary Profile '$wslName' during commit."}
+        $journal.State='TemporaryUnregistered';Save-Journal
+
+        New-Item -ItemType Directory -Path $finalRoot -Force|Out-Null
+        $finalWsl=Join-Path $finalRoot 'wsl';New-Item -ItemType Directory -Path $finalWsl -Force|Out-Null
+        $finalVhdx=Join-Path $finalWsl 'ext4.vhdx'
+
+        # Promotion of the durable WSL payload is a single filesystem move. If anything
+        # after this point fails, the final directory is moved back into Troubleshoot.
+        Move-Item -LiteralPath $export -Destination $finalVhdx -Force
+        $journal.State='PayloadPromoted';Save-Journal
+
         & wsl.exe --import-in-place $wslName $finalVhdx 2>&1|Out-Null
         if($LASTEXITCODE-ne 0){throw "Failed to import committed Profile '$wslName' in place."}
+        $journal.State='WslRegistered';Save-Journal
+
         $registered=@(& wsl.exe --list --quiet 2>$null)|ForEach-Object{($_-replace "`0",'').Trim()}|Where-Object{$_}
         if($registered-notcontains$wslName){throw "Committed Profile '$wslName' is not registered with WSL."}
         $smoke=& wsl.exe --distribution $wslName -- bash -lc 'printf DISTROSHELF_PROFILE_COMMIT_OK' 2>&1
         if($LASTEXITCODE-ne 0 -or (($smoke-join "`n") -notmatch 'DISTROSHELF_PROFILE_COMMIT_OK')){throw "Committed Profile '$wslName' failed its post-commit smoke test."}
+        $journal.State='WslSmokeVerified';Save-Journal
 
-        $journal.State='WslCommitted';$journal|ConvertTo-Json -Depth 20|Set-Content $journalPath -Encoding UTF8
-        [ordered]@{SchemaVersion=1;ProfileId=$candidate.Id;Name=$candidate.Name;Distro=$candidate.Distro;WslName=$wslName;PackageManager=$candidate.PackageManager;Terminal=$Terminal;ProfileHash=$BuildResult.ProfileHash;CommittedAt=[DateTime]::UtcNow.ToString('o')}|ConvertTo-Json -Depth 20|Set-Content (Join-Path $finalRoot 'profile.json') -Encoding UTF8
+        $record=[ordered]@{
+            SchemaVersion=1;ProfileId=$candidate.Id;Name=$candidate.Name;Distro=$candidate.Distro;
+            WslName=$wslName;PackageManager=$candidate.PackageManager;Terminal=$Terminal;
+            ProfileHash=$BuildResult.ProfileHash;CommittedAt=[DateTime]::UtcNow.ToString('o')
+        }
+        Write-DistroShelfJsonAtomically -Path (Join-Path $finalRoot 'profile.json') -Value $record
 
+        # Registry publication is deliberately the final step. A failed WSL commit therefore
+        # cannot leave a Ready profile in profiles.json.
         $committed=Commit-DistroShelfProfile -Candidate $candidate -Terminal $Terminal -ProfileHash $BuildResult.ProfileHash
-        $journal.State='Committed';$journal|ConvertTo-Json -Depth 20|Set-Content $journalPath -Encoding UTF8
-        Remove-Item -LiteralPath $candidateRoot -Recurse -Force -ErrorAction SilentlyContinue
+        $journal.State='Committed';$journal|ConvertTo-Json -Depth 20|Set-Content -LiteralPath $journalPath -Encoding UTF8
+
+        Remove-Item -LiteralPath $transactionRoot -Recurse -Force -ErrorAction SilentlyContinue
         return [pscustomobject][ordered]@{Success=$true;Profile=$committed;Root=$finalRoot;WslName=$wslName;ProfileHash=$BuildResult.ProfileHash}
     } catch {
-        $journal.State='CommitFailed';$journal.Error=$_.Exception.Message;$journal|ConvertTo-Json -Depth 20|Set-Content $journalPath -Encoding UTF8
+        # Never leave a partially promoted Profile outside the transaction journal. If the
+        # WSL registration exists, unregister it first; then move every remaining artifact
+        # back under the transaction root so the entire failed attempt can be preserved by
+        # the caller's Troubleshoot handling.
+        try{if(@(& wsl.exe --list --quiet 2>$null)|ForEach-Object{($_-replace "`0",'').Trim()}|Where-Object{$_ -eq $wslName}){& wsl.exe --unregister $wslName 2>$null|Out-Null}}catch{}
+        if(Test-Path -LiteralPath $finalRoot){
+            $recover=Join-Path $transactionRoot 'failed-commit'
+            try{New-Item -ItemType Directory -Path $recover -Force|Out-Null;Move-Item -LiteralPath $finalRoot -Destination (Join-Path $recover ([string]$candidate.Name)) -Force}catch{}
+        }
+        $journal.State='CommitFailed';$journal.Error=$_.Exception.Message;Save-Journal
         throw
     }
 }
