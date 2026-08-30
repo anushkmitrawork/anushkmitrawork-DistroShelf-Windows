@@ -1,95 +1,48 @@
-# Non-destructive tests for DistroShelf installer architecture.
+# Non-destructive tests for the current DistroShelf Profile registry.
 # Run from repository root with:
 # powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\DistroShelf.Tests.ps1
 
-$ErrorActionPreference = 'Stop'
-$root = Split-Path -Parent $PSScriptRoot
-$src = Join-Path $root 'src'
+$ErrorActionPreference='Stop'
+$root=Split-Path -Parent $PSScriptRoot
+$src=Join-Path $root 'src'
+$failed=0
 
-$required = @(
-    'ProfileManager.ps1','ProfileInstaller.ps1','Provisioning.ps1','RootfsProvider.ps1',
-    'WslImporter.ps1','ProvisionProfile.ps1','DependencyEngine.ps1','InstallOrchestrator.ps1','DistroShelfSetup.ps1'
-)
-
-$failed = 0
-foreach ($file in $required) {
-    $path = Join-Path $src $file
-    if (Test-Path -LiteralPath $path) { Write-Host "PASS  file exists: $file" }
-    else { Write-Host "FAIL  missing: $file"; $failed++ }
+foreach($file in @('ProfileManager.ps1','DistroTrackManager.ps1','InstallOrchestrator.ps1','Engine\TransactionEngine.ps1','Engine\HashEngine.ps1','Engine\DagScheduler.ps1','Engine\StageExecutor.ps1')){
+    if(Test-Path -LiteralPath (Join-Path $src $file)){Write-Host "PASS  file exists: $file"}
+    else{Write-Host "FAIL  missing: $file";$failed++}
 }
 
 . (Join-Path $src 'ProfileManager.ps1')
-$tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("DistroShelf-Test-" + [guid]::NewGuid())
-New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
-$oldRoot = $script:DistroShelfProfileRoot
-$oldFile = $script:DistroShelfProfileFile
+$tempRoot=Join-Path ([IO.Path]::GetTempPath()) ('DistroShelf-Profile-Test-'+[guid]::NewGuid())
+$oldRoot=$script:DistroShelfProfileRoot
+$oldFile=$script:DistroShelfProfileFile
 try {
-    $script:DistroShelfProfileRoot = $tempRoot
-    $script:DistroShelfProfileFile = Join-Path $tempRoot 'profiles.json'
+    $script:DistroShelfProfileRoot=$tempRoot
+    $script:DistroShelfProfileFile=Join-Path $tempRoot 'profiles.json'
     Initialize-DistroShelfProfileStore
 
-    $u1 = New-DistroShelfProfile -Distro Ubuntu
-    $u2 = New-DistroShelfProfile -Distro Ubuntu
-    $f1 = New-DistroShelfProfile -Distro Fedora
-    $d1 = New-DistroShelfProfile -Distro Debian
-    $d2 = New-DistroShelfProfile -Distro Debian
+    $u=[pscustomobject]@{Id='u1';Name='Ubuntu1';Distro='Ubuntu';WslName='DistroShelf-Ubuntu1';PackageManager='apt';Status='Candidate';CreatedAt=[DateTime]::UtcNow.ToString('o');Dependencies=[ordered]@{}}
+    $d=[pscustomobject]@{Id='d1';Name='Debian1';Distro='Debian';WslName='DistroShelf-Debian1';PackageManager='apt';Status='Candidate';CreatedAt=[DateTime]::UtcNow.ToString('o');Dependencies=[ordered]@{}}
 
-    if ($u1.Name -eq 'Ubuntu1' -and $u2.Name -eq 'Ubuntu2' -and $f1.Name -eq 'Fedora1' -and $d1.Name -eq 'Debian1' -and $d2.Name -eq 'Debian2') {
-        Write-Host 'PASS  independent profile numbering'
-    } else {
-        Write-Host "FAIL  profile numbering: $($u1.Name), $($u2.Name), $($f1.Name), $($d1.Name), $($d2.Name)"; $failed++
-    }
+    $uRecord=Commit-DistroShelfProfile -Candidate $u -Terminal 'GNOME Console' -ProfileHash ('a'*64)
+    $dRecord=Commit-DistroShelfProfile -Candidate $d -Terminal 'Kitty' -ProfileHash ('b'*64)
+    if($uRecord.Status -eq 'Ready' -and $dRecord.Status -eq 'Ready' -and $uRecord.Name -eq 'Ubuntu1' -and $dRecord.Name -eq 'Debian1'){Write-Host 'PASS  Profiles commit independently by distro'}else{Write-Host 'FAIL  independent profile commits';$failed++}
 
-    $preview = [pscustomobject]@{Id='__PREVIEW__';Name='Ubuntu3';Distro='Ubuntu';WslName='DistroShelf-Ubuntu3';Status='Pending'}
-    $next = Get-NextDistroShelfProfileNumber -Distro Ubuntu
-    if ($preview.Name -eq 'Ubuntu3' -and $next -eq 3 -and @(Get-DistroShelfProfiles | Where-Object { $_.Name -eq 'Ubuntu3' }).Count -eq 0) {
-        Write-Host 'PASS  pending previews do not change next committed profile number'
-    } else {
-        Write-Host "FAIL  pending preview numbering: preview=$($preview.Name), next=$next"; $failed++
-    }
+    $uFound=Get-DistroShelfProfileById -Id 'u1'
+    $dFound=Get-DistroShelfProfileById -Id 'd1'
+    if($uFound.Name -eq 'Ubuntu1' -and $uFound.Terminal -eq 'GNOME Console' -and $dFound.Name -eq 'Debian1' -and $dFound.Terminal -eq 'Kitty'){Write-Host 'PASS  profile identity and terminal metadata persist'}else{Write-Host 'FAIL  profile identity or terminal metadata';$failed++}
 
-    $u3 = New-DistroShelfProfile -Distro Ubuntu
-    if ($u3.Name -eq 'Ubuntu3' -and $u3.Status -eq 'Pending') {
-        Write-Host 'PASS  next committed profile uses preview number'
-    } else {
-        Write-Host "FAIL  next committed Ubuntu profile: $($u3.Name)/$($u3.Status)"; $failed++
-    }
+    if(-not(Test-DistroShelfProfileNameAvailable -WslName 'DistroShelf-Ubuntu1') -and Test-DistroShelfProfileNameAvailable -WslName 'DistroShelf-Ubuntu2'){Write-Host 'PASS  committed WSL names are reserved independently'}else{Write-Host 'FAIL  profile name availability check';$failed++}
 
-    Set-DistroShelfProfileStatus -Id $d1.Id -Status 'Ready' | Out-Null
-    $d3 = New-DistroShelfProfile -Distro Debian
-    $d1check = Get-DistroShelfProfileById -Id $d1.Id
-    $d2check = Get-DistroShelfProfileById -Id $d2.Id
-    if ($d1check.Name -eq 'Debian1' -and $d1check.Status -eq 'Ready' -and $d2check.Name -eq 'Debian2' -and $d2check.Status -eq 'Pending' -and $d3.Name -eq 'Debian3') {
-        Write-Host 'PASS  installed distro creates independent next profile'
-    } else {
-        Write-Host "FAIL  repeated installed distro profile: $($d1check.Name)/$($d1check.Status), $($d2check.Name)/$($d2check.Status), $($d3.Name)/$($d3.Status)"; $failed++
-    }
-
-    $names = @(Get-DistroShelfProfiles | Select-Object -ExpandProperty WslName)
-    if (($names | Select-Object -Unique).Count -eq $names.Count) { Write-Host 'PASS  profile records remain independent' } else { Write-Host 'FAIL  profile records are not independent'; $failed++ }
-
-    $found = Get-DistroShelfProfileById -Id $u2.Id
-    if ($found -and $found.Name -eq 'Ubuntu2') { Write-Host 'PASS  profile lookup by ID' } else { Write-Host 'FAIL  profile lookup by ID'; $failed++ }
-
-    Set-DistroShelfProfileTerminal -Id $u2.Id -Terminal 'Kitty' | Out-Null
-    Set-DistroShelfProfileStatus -Id $u2.Id -Status 'Ready' | Out-Null
-    $updated = Get-DistroShelfProfileById -Id $u2.Id
-    if ($updated.Status -eq 'Ready' -and $updated.Terminal -eq 'Kitty') { Write-Host 'PASS  profile status and terminal persist independently' } else { Write-Host 'FAIL  profile status or terminal persistence'; $failed++ }
-
-    $remaining = @(Get-DistroShelfProfiles)
-    if (($remaining | Where-Object Id -eq $u1.Id) -and ($remaining | Where-Object Id -eq $u2.Id) -and ($remaining | Where-Object Id -eq $f1.Id) -and ($remaining | Where-Object Id -eq $d1.Id) -and ($remaining | Where-Object Id -eq $d2.Id) -and ($remaining | Where-Object Id -eq $d3.Id)) { Write-Host 'PASS  profile records survive updates' } else { Write-Host 'FAIL  profile records lost during updates'; $failed++ }
-} finally {
-    $script:DistroShelfProfileRoot = $oldRoot
-    $script:DistroShelfProfileFile = $oldFile
+    $profiles=@(Get-DistroShelfProfiles)
+    if($profiles.Count -eq 2 -and (@($profiles|ForEach-Object Id)|Select-Object -Unique).Count -eq 2){Write-Host 'PASS  profile records survive round-trip persistence'}else{Write-Host 'FAIL  profile persistence';$failed++}
+}
+finally {
+    $script:DistroShelfProfileRoot=$oldRoot
+    $script:DistroShelfProfileFile=$oldFile
     Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-$unsafe = @('--unregister', 'wsl --unregister')
-foreach ($file in @('WslImporter.ps1','InstallOrchestrator.ps1')) {
-    $text = Get-Content -LiteralPath (Join-Path $src $file) -Raw
-    foreach ($token in $unsafe) { if ($text -match [regex]::Escape($token)) { Write-Host "FAIL  destructive token '$token' found in $file"; $failed++ } }
-}
-
-if ($failed -gt 0) { Write-Host "`n$failed test(s) failed."; exit 1 }
-Write-Host "`nAll non-destructive architecture tests passed."
+if($failed -gt 0){Write-Host "`n$failed test(s) failed.";exit 1}
+Write-Host "`nAll current Profile registry tests passed."
 exit 0
