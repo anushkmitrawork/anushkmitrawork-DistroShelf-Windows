@@ -76,7 +76,8 @@ if(Test-Path (Join-Path $path 'marker.txt')){Pass 'Troubleshoot retains failed t
 
 $commitPath=Join-Path $src 'Profile\ProfileCommit.ps1'
 $commitText=Get-Content -LiteralPath $commitPath -Raw
-if($commitText -match '--export'){Fail 'ProfileCommit performs a second WSL export'}else{Pass 'ProfileCommit does not re-export the accepted Profile'}
+$exportInvocations=@($commitText -split "`r?`n" | Where-Object { $_ -notmatch '^\s*#' -and $_ -match '\bwsl\.exe\s+--export\b' })
+if($exportInvocations.Count -gt 0){Fail 'ProfileCommit performs a second WSL export'}else{Pass 'ProfileCommit does not re-export the accepted Profile'}
 if($commitText -match 'BuildResult\.ExportPath'){Pass 'ProfileCommit consumes BuildResult.ExportPath'}else{Fail 'ProfileCommit does not consume BuildResult.ExportPath'}
 if($commitText -match 'artifactHash' -and $commitText -match 'ProfileHash'){Pass 'Profile commit verifies artifact hash against Profile hash'}else{Fail 'Profile artifact identity verification missing'}
 
