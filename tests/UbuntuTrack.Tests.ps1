@@ -10,6 +10,10 @@ $src=Join-Path $root 'src'
 function Pass([string]$m){Write-Host "PASS  $m"}
 function Fail([string]$m){throw "FAIL  $m"}
 
+if(-not(Get-Command Invoke-DistroShelfTrackBuilder -ErrorAction SilentlyContinue)){Fail 'Track builder failed to load.'}
+if(-not(Get-Command Export-DistroShelfTrackStageArtifact -ErrorAction SilentlyContinue)){Fail 'Track artifact exporter failed to load.'}
+Pass 'Ubuntu Track runtime functions load successfully'
+
 $provider=Get-DistroShelfProvider -Distro 'Ubuntu'
 $stages=@($provider.Stages)
 $expected=@('rootfs','podman','distrobox','flatpak','flathub','distroshelf','terminal-gnome-console','terminal-kitty','terminal-alacritty','terminal-foot','terminal-konsole')
@@ -61,12 +65,12 @@ if(@($provider.TrackFinalTests|ForEach-Object Name) -notcontains 'podman-functio
 if(@($provider.ProfileFinalTests|ForEach-Object Name) -notcontains 'profile-os'){Fail 'Ubuntu final Profile test is missing'}
 Pass 'Ubuntu final acceptance gates are present'
 
-# Guard the runtime implementation: a stage cannot be verified without an immediate artifact hash check.
 $trackText=Get-Content (Join-Path $src 'Track\TrackEngine.ps1') -Raw
 if($trackText -notmatch 'Test-DistroShelfHashRecord'){Fail 'Track runtime does not immediately re-verify persisted stage hashes'}
 if($trackText -notmatch 'Write-DistroShelfHashRecord'){Fail 'Track runtime does not persist stage hashes'}
 if($trackText -notmatch 'Move-DistroShelfTransactionToTroubleshoot'){Fail 'Track runtime does not preserve failures in Troubleshoot'}
-if($trackText -notmatch 'Complete-DistroShelfTransaction'){Fail 'Track runtime does not mark a verified transaction before commit'}
+if($trackText -notmatch "State='Verified'"){Fail 'Track runtime does not mark a verified transaction before commit'}
+if($trackText -match "Get-DistroShelfExecutionPlan"){Fail 'Track runtime still depends on a planning-only scheduler for execution'}
 Pass 'Ubuntu Track runtime enforces test → artifact hash → transaction verification'
 
 Write-Host "`nUbuntu Track contract tests passed."
