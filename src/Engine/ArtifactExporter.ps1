@@ -1,19 +1,25 @@
 # DistroShelf - Track artifact export helpers
 
-function Export-DistroShelfWslPath {
-    param([Parameter(Mandatory)][string]$WslName,[Parameter(Mandatory)][string]$WslPath,[Parameter(Mandatory)][string]$Destination)
-    New-Item -ItemType Directory -Path $Destination -Force | Out-Null
-    $share="\\wsl$\$WslName$WslPath"
-    if(-not(Test-Path -LiteralPath $share)){throw "Track artifact source does not exist in WSL: $WslPath"}
+function Export-DistroShelfPackageDirectory {
+    param([Parameter(Mandatory)][string]$WslName,[Parameter(Mandatory)][string]$SourcePath,[Parameter(Mandatory)][string]$Destination)
+    $share="\\wsl$\$WslName$SourcePath"
+    if(!(Test-Path -LiteralPath $share -PathType Container)){throw "Track package source does not exist: $SourcePath"}
     $files=@(Get-ChildItem -LiteralPath $share -Recurse -File -ErrorAction Stop)
-    if(!$files.Count){throw "Track artifact source is empty: $WslPath"}
+    if(!$files.Count){throw "Track package source is empty: $SourcePath"}
+    New-Item -ItemType Directory -Path $Destination -Force|Out-Null
     Copy-Item -LiteralPath (Join-Path $share '*') -Destination $Destination -Recurse -Force -ErrorAction Stop
     return $files.Count
 }
-function Export-DistroShelfAptCache {param([string]$WslName,[string]$Destination) return Export-DistroShelfWslPath -WslName $WslName -WslPath '/var/cache/apt/archives' -Destination (Join-Path $Destination 'packages')}
-function Export-DistroShelfDnfCache {param([string]$WslName,[string]$Destination) $share="\\wsl$\$WslName\var\cache\dnf";if(!(Test-Path $share)){throw 'DNF package cache is unavailable.'};$rpms=@(Get-ChildItem $share -Recurse -File -Filter '*.rpm' -ErrorAction SilentlyContinue);if(!$rpms.Count){throw 'No RPM artifacts were produced by the DNF acquisition stage.'};$out=Join-Path $Destination 'packages';New-Item -ItemType Directory -Path $out -Force|Out-Null;foreach($rpm in $rpms){Copy-Item $rpm.FullName $out -Force};return $rpms.Count}
-function Export-DistroShelfPacmanCache {param([string]$WslName,[string]$Destination) return Export-DistroShelfWslPath -WslName $WslName -WslPath '/var/cache/pacman/pkg' -Destination (Join-Path $Destination 'packages')}
-function Export-DistroShelfZypperCache {param([string]$WslName,[string]$Destination) return Export-DistroShelfWslPath -WslName $WslName -WslPath '/var/cache/zypp/packages' -Destination (Join-Path $Destination 'packages')}
+
+function Export-DistroShelfWslPath {
+    param([Parameter(Mandatory)][string]$WslName,[Parameter(Mandatory)][string]$WslPath,[Parameter(Mandatory)][string]$Destination)
+    return Export-DistroShelfPackageDirectory -WslName $WslName -SourcePath $WslPath -Destination $Destination
+}
+function Export-DistroShelfAptCache {param([string]$WslName,[string]$Destination,[string]$StageId) if(!$StageId){throw 'APT export requires StageId.'};return Export-DistroShelfPackageDirectory -WslName $WslName -SourcePath "/tmp/ds-$StageId/packages" -Destination (Join-Path $Destination 'packages')}
+function Export-DistroShelfDnfCache {param([string]$WslName,[string]$Destination,[string]$StageId) if(!$StageId){throw 'DNF export requires StageId.'};return Export-DistroShelfPackageDirectory -WslName $WslName -SourcePath "/tmp/ds-$StageId/packages" -Destination (Join-Path $Destination 'packages')}
+function Export-DistroShelfPacmanCache {param([string]$WslName,[string]$Destination,[string]$StageId) if(!$StageId){throw 'Pacman export requires StageId.'};return Export-DistroShelfPackageDirectory -WslName $WslName -SourcePath "/tmp/ds-$StageId/packages" -Destination (Join-Path $Destination 'packages')}
+function Export-DistroShelfZypperCache {param([string]$WslName,[string]$Destination,[string]$StageId) if(!$StageId){throw 'Zypper export requires StageId.'};return Export-DistroShelfPackageDirectory -WslName $WslName -SourcePath "/tmp/ds-$StageId/packages" -Destination (Join-Path $Destination 'packages')}
+
 function Export-DistroShelfFlatpakSideload {
     param([Parameter(Mandatory)][string]$WslName,[Parameter(Mandatory)][string]$AppId,[Parameter(Mandatory)][string]$Destination)
     $tmp="/tmp/distroShelf-sideload-$([guid]::NewGuid().ToString('N'))"
