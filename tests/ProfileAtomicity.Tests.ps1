@@ -26,18 +26,20 @@ function New-TestScenario {
 
 $unregister= { param($n) 0 }
 $import= { param($n,$p) 0 }
-$list= { @($args[0]) }
 $smoke= { param($n) [pscustomobject]@{ExitCode=0;Output=@('DISTROSHELF_PROFILE_COMMIT_OK')} }
 $publisher= { param($c,$t,$h) [pscustomobject]@{Published=$true;Name=$c.Name} }
 $hashFile={ param($p) (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLowerInvariant() }
 
 $scenarios=@()
 try {
-    # 1. Successful commit consumes the exact accepted export.
+    # 1. Successful commit consumes the exact accepted export and moves it as-is.
     $s=New-TestScenario 'success';$scenarios+=$s
     $result=Commit-DistroShelfProfileTransaction -BuildResult $s.Build -Reservation $s.Reservation -Terminal 'GNOME Console' -HashFile $hashFile -UnregisterWsl $unregister -ImportInPlace $import -ListWsl { @($s.Candidate.WslName) } -SmokeTest $smoke -PublishProfile $publisher
     if($result.Success -and $result.ProfileHash -eq $s.Hash){Pass 'successful atomic Profile commit consumes exact artifact'}else{Fail 'successful atomic Profile commit failed'}
-    if(Test-Path (Join-Path $result.Root 'wsl\ext4.vhdx')){Pass 'successful commit preserves promoted artifact'}else{Fail 'successful commit lost promoted artifact'}
+    $promoted=Join-Path $result.Root 'wsl\ext4.vhdx'
+    if(Test-Path $promoted){Pass 'successful commit preserves promoted artifact'}else{Fail 'successful commit lost promoted artifact'}
+    if(-not(Test-Path $s.Export)){Pass 'successful commit moves accepted artifact rather than copying it'}else{Fail 'successful commit copied artifact instead of moving it as-is'}
+    if((Get-FileHash -LiteralPath $promoted -Algorithm SHA256).Hash.ToLowerInvariant() -eq $s.Hash){Pass 'promoted Profile artifact is byte-identical to accepted artifact'}else{Fail 'promoted Profile artifact changed during commit'}
     Remove-Item -LiteralPath $s.Root -Recurse -Force -ErrorAction SilentlyContinue
 
     # 2. Missing export blocks before destructive operations.
