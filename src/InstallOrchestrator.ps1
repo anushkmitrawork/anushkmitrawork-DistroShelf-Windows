@@ -20,7 +20,7 @@ function Invoke-DistroShelfInstall {
         [scriptblock]$OnStatus
     )
     function Report([int]$Percent,[string]$Message){if($OnProgress){&$OnProgress $Percent $Message};if($OnStatus){&$OnStatus $Message}}
-    $reservation=$null;$profileTx=$null;$trackBuild=$null;$candidate=$null
+    $reservation=$null;$profileTx=$null;$trackBuild=$null;$candidate=$null;$commitTroubleshoot=$null
     try {
         $provider=Get-DistroShelfProvider -Distro $Distro
         $existing=$null
@@ -30,9 +30,7 @@ function Invoke-DistroShelfInstall {
             if([string]$existing.Distro -ne $Distro){throw 'Selected profile belongs to another distro.'}
             if([string]$existing.Status -ne 'Ready'){throw 'Only committed profiles may be reused.'}
         }
-        if($existing){
-            throw 'Reinstallation of an existing committed Profile is not implemented in the atomic engine yet.'
-        }
+        if($existing){throw 'Reinstallation of an existing committed Profile is not implemented in the atomic engine yet.'}
         $reservation=Reserve-DistroShelfProfileNumber -Distro $Distro
         $candidate=[pscustomobject]@{Id=$reservation.Id;Name=$reservation.Name;Distro=$Distro;WslName="DistroShelf-$($reservation.Name)";PackageManager=$provider.PackageManager;Status='Candidate';Terminal=$Terminal}
         Report 2 "Preparing $($candidate.Name)..."
@@ -60,10 +58,15 @@ function Invoke-DistroShelfInstall {
         Report 100 "Installation complete: $($committed.Profile.Name)."
         return [pscustomobject][ordered]@{Success=$true;ProfileId=$committed.Profile.Id;ProfileName=$committed.Profile.Name;WslName=$committed.WslName;Distro=$Distro;Error=$null;TroubleshootPath=$null}
     } catch {
-        $troubleshoot=$null
-        if($profileTx -and $profileTx.TroubleshootPath){$troubleshoot=$profileTx.TroubleshootPath}
-        elseif($trackBuild -and $trackBuild.TroubleshootPath){$troubleshoot=$trackBuild.TroubleshootPath}
-        elseif($candidate -and $candidate.Id){$troubleshoot=$null}
+        # ProfileEngine moves build failures to Troubleshoot itself. A commit failure happens
+        # after BuildResult.Success and therefore needs the coordinator to preserve that
+        # still-live transaction as well.
+        if($profileTx -and $profileTx.Success -and $profileTx.Transaction -and (Test-Path -LiteralPath $profileTx.Transaction.Root)){
+            try{$commitTroubleshoot=Move-DistroShelfTransactionToTroubleshoot -Transaction $profileTx.Transaction -ErrorRecord $_}catch{}
+        }
+        $troubleshoot=$commitTroubleshoot
+        if(-not $troubleshoot -and $profileTx -and $profileTx.TroubleshootPath){$troubleshoot=$profileTx.TroubleshootPath}
+        if(-not $troubleshoot -and $trackBuild -and $trackBuild.TroubleshootPath){$troubleshoot=$trackBuild.TroubleshootPath}
         if($reservation){try{Release-DistroShelfProfileReservation -Reservation $reservation}catch{}}
         Report 100 'Installation failed; no unverified Profile or Track state was committed.'
         return [pscustomobject][ordered]@{Success=$false;ProfileId=$null;ProfileName=$(if($candidate){$candidate.Name}else{$null});WslName=$(if($candidate){$candidate.WslName}else{$null});Distro=$Distro;Error=$_.Exception.Message;TroubleshootPath=$troubleshoot}
