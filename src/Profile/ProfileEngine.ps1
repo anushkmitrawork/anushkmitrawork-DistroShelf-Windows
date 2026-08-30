@@ -28,6 +28,7 @@ function Invoke-DistroShelfProfileBuild {
         $stages=@($allStages|Where-Object{[string]$_.Kind -ne 'terminal'})+$selectedTerminal
         $stages=@($stages|Where-Object{[string]$_.Id -ne 'rootfs'})
         if(!$stages.Count){throw "No Profile stages are defined for '$Distro'."}
+        Test-DistroShelfDag -Stages @($stages)|Out-Null
         Test-DistroShelfRequiredTrackStages -TrackRoot $TrackRoot -Stages $stages|Out-Null
         $rootfs=Get-ChildItem -LiteralPath (Join-Path $TrackRoot 'Distro') -File -ErrorAction SilentlyContinue|Select-Object -First 1
         if(!$rootfs){throw "Verified Track has no root filesystem artifact for '$Distro'."}
