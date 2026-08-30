@@ -1,6 +1,7 @@
 # Explicit opt-in live integration test for Ubuntu Track and Profile.
 # This performs real WSL imports, downloads, package installs and artifact creation.
 # It never writes an unverified Track or Profile directly into the committed stores.
+# The CI live gate is intentionally opt-in and runs only on commits marked [live].
 # Run from repository root in an elevated PowerShell with WSL 2 available:
 #   $env:DISTROSHELF_RUN_LIVE_TESTS='1'
 #   powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\UbuntuLive.Tests.ps1
