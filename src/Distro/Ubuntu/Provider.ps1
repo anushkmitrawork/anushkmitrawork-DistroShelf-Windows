@@ -1,6 +1,17 @@
 # DistroShelf - Ubuntu reference provider
 . (Join-Path $PSScriptRoot '..\PackageAcquisition.ps1')
 function New-DistroShelfUbuntuProvider {
+    $root=New-DistroShelfRootfsStage 'apt'
+    $root.Track.Tests=@(
+        (New-StageTest 'os-release' 'test -s /etc/os-release')
+        (New-StageTest 'architecture' 'test "$(uname -m)" = "x86_64"')
+        (New-StageTest 'apt-available' 'command -v apt-get')
+        (New-StageTest 'dpkg-available' 'command -v dpkg')
+    )
+    $root.Profile.Tests=@(
+        (New-StageTest 'os-release' 'test -s /etc/os-release')
+        (New-StageTest 'architecture' 'test "$(uname -m)" = "x86_64"')
+    )
     $pod=@(
         (New-StageTest 'podman-command' 'command -v podman')
         (New-StageTest 'podman-version' 'podman --version')
@@ -16,18 +27,24 @@ function New-DistroShelfUbuntuProvider {
         (New-StageTest 'flatpak-version' 'flatpak --version')
         (New-StageTest 'flatpak-remotes' 'flatpak remotes --columns=name')
     )
-    $root=New-DistroShelfRootfsStage 'apt'
     $p=New-DistroShelfPackageStage 'podman' 'apt' @('podman') $pod 'container-runtime'
     $d=New-DistroShelfPackageStage 'distrobox' 'apt' @('distrobox') $db 'container-runtime';$d.Depends=@('rootfs','podman')
     $f=New-DistroShelfPackageStage 'flatpak' 'apt' @('flatpak') $fp 'desktop-runtime'
     $terminalStages=@(
-        (New-DistroShelfTerminalStage 'terminal-gnome-console' 'apt' 'GNOME Console' 'gnome-console' 'kgx'),
-        (New-DistroShelfTerminalStage 'terminal-kitty' 'apt' 'Kitty' 'kitty' 'kitty'),
-        (New-DistroShelfTerminalStage 'terminal-alacritty' 'apt' 'Alacritty' 'alacritty' 'alacritty'),
-        (New-DistroShelfTerminalStage 'terminal-foot' 'apt' 'Foot' 'foot' 'foot'),
+        (New-DistroShelfTerminalStage 'terminal-gnome-console' 'apt' 'GNOME Console' 'gnome-console' 'kgx')
+        (New-DistroShelfTerminalStage 'terminal-kitty' 'apt' 'Kitty' 'kitty' 'kitty')
+        (New-DistroShelfTerminalStage 'terminal-alacritty' 'apt' 'Alacritty' 'alacritty' 'alacritty')
+        (New-DistroShelfTerminalStage 'terminal-foot' 'apt' 'Foot' 'foot' 'foot')
         (New-DistroShelfTerminalStage 'terminal-konsole' 'apt' 'Konsole' 'konsole' 'konsole')
     )
     $fl=New-StageContract 'flathub' @('rootfs','flatpak') 'apt' @('mkdir -p /tmp/ds-flathub; curl -fsSL https://dl.flathub.org/repo/flathub.flatpakrepo -o /tmp/ds-flathub/flathub.flatpakrepo') @('flatpak remote-add --if-not-exists flathub /tmp/ds-flathub/flathub.flatpakrepo') @(New-StageTest 'flathub-remote' 'flatpak remotes --columns=name | grep -Fx flathub') @() @(New-StageTest 'flathub-remote' 'flatpak remotes --columns=name | grep -Fx flathub') 'wsl-path' '/tmp/ds-flathub' 'dependency' 'desktop-runtime' 'flatpak'
     $ds=New-StageContract 'distroshelf' @('rootfs','distrobox','flatpak','flathub') 'apt' @('flatpak install -y flathub com.ranfdev.DistroShelf') @() @(New-StageTest 'distroshelf-install' 'flatpak info com.ranfdev.DistroShelf') @('flatpak install -y --sideload-repo=TRACK_SIDELOAD flathub com.ranfdev.DistroShelf') @(New-StageTest 'distroshelf-install' 'flatpak info com.ranfdev.DistroShelf') 'flatpak-sideload' 'com.ranfdev.DistroShelf' 'dependency' 'apps' 'flatpak'
-    [pscustomobject][ordered]@{SchemaVersion=3;Distro='Ubuntu';Track='Ubuntu0';PackageManager='apt';Rootfs=@{Name='Ubuntu';Architecture='amd64'};Stages=@($root,$p,$d,$f,$fl,$ds)+$terminalStages;TrackFinalTests=@(New-StageTest 'podman-functional' 'podman run --rm quay.io/podman/hello true');ProfileFinalTests=@(New-StageTest 'profile-os' 'test -s /etc/os-release')}
+    [pscustomobject][ordered]@{SchemaVersion=4;Distro='Ubuntu';Track='Ubuntu0';PackageManager='apt';Rootfs=@{Name='Ubuntu';Architecture='amd64'};Stages=@($root,$p,$d,$f,$fl,$ds)+$terminalStages;TrackFinalTests=@(
+        (New-StageTest 'podman-functional' 'podman run --rm quay.io/podman/hello true')
+        (New-StageTest 'distrobox-final' 'distrobox list')
+        (New-StageTest 'flatpak-final' 'flatpak info com.ranfdev.DistroShelf')
+    );ProfileFinalTests=@(
+        (New-StageTest 'profile-os' 'test -s /etc/os-release')
+        (New-StageTest 'profile-architecture' 'test "$(uname -m)" = "x86_64"')
+    )}
 }
