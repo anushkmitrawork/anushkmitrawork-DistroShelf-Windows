@@ -46,10 +46,21 @@ A Profile does not become a persistent record while the attempt is running.
 ## Transaction promotion
 Track and Profile attempts are the actual in-progress state. On success, the accepted transaction state is promoted to its committed destination; on failure, that same transaction state is preserved in `Troubleshoot`. The destination is not reconstructed from a recipe or summary. If a storage boundary requires controlled copying/finalization, it must preserve the exact transaction contents and identity.
 
-## DAG scheduling
-Distro definitions declare prerequisites and produced capabilities. The scheduler derives safe parallelism from that graph instead of hard-coding execution order per distro.
+## Core execution
+The Core execution model is permanently **linear and deterministic**. Track and Profile correctness must never depend on parallel execution.
 
-Independent acquisition stages may run concurrently, subject to runtime resource locks and a global concurrency limit. Dependent stages wait for prerequisite hashes.
+- A dependency is executed only after its declared prerequisites have been verified.
+- Stages are executed one at a time in a deterministic topological order.
+- A successful stage records its verification hash before a dependent stage may execute.
+- A failed or unverified stage never unlocks a dependent stage.
+- The linear executor is the canonical reference implementation and the permanent fallback path.
+
+The dependency graph remains part of the Core contract because it defines prerequisite correctness. Parallel interpretation of that graph is not part of Core.
+
+## Parallelism feature boundary
+Parallelism is a separate optional feature block to be developed only after the five distro Track/Profile implementations and the rest of the Core are complete.
+
+Parallelism may interpret the same dependency graph to improve speed, but it must not change Track/Profile semantics. If the Parallel executor is unavailable or fails, Linear execution remains usable.
 
 ## Troubleshoot
 An unsuccessful transaction is moved/preserved as the actual attempt. It is not reconstructed from a summary. The failed tree includes artifacts, logs, test results, hashes, metadata, and any staged WSL data needed for diagnosis.
