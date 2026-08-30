@@ -31,6 +31,7 @@ function Invoke-DistroShelfTrackStage {
         $testResult=Invoke-DistroShelfTrackAcceptance -WslName $BuilderName -Tests @($Stage.Track.Tests)
         if(-not $testResult.Passed){throw "Track stage '$id' failed verification."}
         $hash=Get-DistroShelfTreeHash -Root $DistroRoot
+        $hashRoot=$DistroRoot
     } else {
         Invoke-DistroShelfCommands -WslName $BuilderName -Commands @($Stage.Track.Acquire)
         Invoke-DistroShelfCommands -WslName $BuilderName -Commands @($Stage.Track.Install)
@@ -38,8 +39,11 @@ function Invoke-DistroShelfTrackStage {
         if(-not $testResult.Passed){throw "Track stage '$id' failed verification."}
         Export-DistroShelfTrackStageArtifact -Distro $Distro -Stage $Stage -WslName $BuilderName -Destination $stageRoot
         $hash=Get-DistroShelfTreeHash -Root $stageRoot
+        $hashRoot=$stageRoot
     }
-    Write-DistroShelfHashRecord -Path (Join-Path (Join-Path $TrackRoot 'metadata') "$($id -replace ':','-').hash.json") -Stage $id -Hash $hash -TestResult $testResult|Out-Null
+    $hashRecordPath=Join-Path (Join-Path $TrackRoot 'metadata') "$($id -replace ':','-').hash.json"
+    Write-DistroShelfHashRecord -Path $hashRecordPath -Stage $id -Hash $hash -TestResult $testResult|Out-Null
+    if(-not(Test-DistroShelfHashRecord -Path $hashRecordPath -Root $hashRoot -Stage $id)){throw "Track stage '$id' hash record failed immediate verification."}
     [pscustomobject]@{Id=$id;Hash=$hash;Tests=$testResult;Stage=$Stage}
 }
 
@@ -51,11 +55,14 @@ function Invoke-DistroShelfTrackBuilder {
     $tx=New-DistroShelfTransaction -Kind Track -Distro $Distro
     $trackRoot=Join-Path $tx.Root 'Track';$distroRoot=Join-Path $trackRoot 'Distro'
     New-Item -ItemType Directory -Path $trackRoot,$distroRoot,(Join-Path $trackRoot 'metadata'),(Join-Path $trackRoot 'Terminals') -Force|Out-Null
+    Write-DistroShelfTransactionRecord -Transaction $tx -State 'Running' -Data @{Phase='TrackBuildStarted';Distro=$Distro;StageCount=$stages.Count}|Out-Null
     $builderName=$null
     try {
         if($OnProgress){&$OnProgress 5 "Acquiring $Distro root filesystem..."}
         $rootfs=Save-DistroShelfAttemptRootfs -Distro $Distro -DestinationDirectory $distroRoot
         if(-not $rootfs.Verified){throw 'Root filesystem acquisition was not verified.'}
+        $actualRootfsHash=(Get-FileHash -LiteralPath $rootfs.Path -Algorithm SHA256).Hash.ToLowerInvariant()
+        if($actualRootfsHash -ne $rootfs.Sha256.ToLowerInvariant()){throw 'Acquired root filesystem changed before import.'}
         $builderName="DistroShelf-TrackBuild-$($tx.Id)"
         if($OnProgress){&$OnProgress 15 "Importing isolated $Distro Track builder..."}
         $candidate=[pscustomobject]@{Id=$tx.Id;WslName=$builderName;Distro=$Distro;Name="$Distro-TrackBuilder"}
@@ -63,10 +70,6 @@ function Invoke-DistroShelfTrackBuilder {
 
         $verified=@{};$remaining=@($stages);$stageResults=@();$batchNumber=0
         while($remaining.Count){
-            # A dependency becomes eligible only when its predecessor's on-disk hash
-            # record exists and still validates against the predecessor artifact tree.
-            # The in-memory map prevents a stage from being executed twice; it is not
-            # used as a substitute for the persisted verification boundary.
             $ready=@(Get-DistroShelfReadyStages -Stages $remaining -VerifiedHashes $verified -HashRoot $trackRoot)
             if(!$ready.Count){throw 'Track DAG is blocked: no remaining stage has all required verified hashes.'}
             $batch=@(Select-DistroShelfParallelBatch -ReadyStages $ready -MaxConcurrency $MaxConcurrency)
@@ -82,6 +85,7 @@ function Invoke-DistroShelfTrackBuilder {
                 $verified[[string]$result.Id]=$result.Hash
                 $stageResults+=$result
                 $remaining=@($remaining|Where-Object{[string]$_.Id-ne [string]$result.Id})
+                Write-DistroShelfTransactionRecord -Transaction $tx -State 'Running' -Data @{Phase='StageVerified';LastStage=$result.Id;VerifiedStages=@($verified.Keys|Sort-Object);StageResults=@($stageResults|ForEach-Object{[pscustomobject]@{Id=$_.Id;Hash=$_.Hash}})}|Out-Null
             }
         }
 
@@ -91,8 +95,10 @@ function Invoke-DistroShelfTrackBuilder {
         $finalHash=Get-DistroShelfTreeHash -Root $trackRoot -ExcludeRelativePath @('metadata/track.hash.json','metadata/track.json')
         if([string]::IsNullOrWhiteSpace($finalHash) -or $finalHash.Length -ne 64){throw 'Final Track hash generation failed.'}
         Write-DistroShelfHashRecord -Path (Join-Path (Join-Path $trackRoot 'metadata') 'track.hash.json') -Stage 'track' -Hash $finalHash -TestResult $final|Out-Null
-        $manifest=[ordered]@{SchemaVersion=7;Distro=$Distro;Track=$provider.Track;PackageManager=$provider.PackageManager;FinalHash=$finalHash;Stages=($stageResults|ForEach-Object{[pscustomobject]@{Id=$_.Id;Hash=$_.Hash;Tests=$_.Tests}});CreatedAt=[DateTime]::UtcNow.ToString('o')}
+        $manifest=[ordered]@{SchemaVersion=8;Distro=$Distro;Track=$provider.Track;PackageManager=$provider.PackageManager;FinalHash=$finalHash;Stages=($stageResults|ForEach-Object{[pscustomobject]@{Id=$_.Id;Hash=$_.Hash;Tests=$_.Tests}});CreatedAt=[DateTime]::UtcNow.ToString('o')}
         $manifest|ConvertTo-Json -Depth 30|Set-Content -LiteralPath (Join-Path $trackRoot 'metadata\track.json') -Encoding UTF8
+        Write-DistroShelfTransactionRecord -Transaction $tx -State 'Verified' -Data @{Phase='TrackVerified';FinalHash=$finalHash;VerifiedStages=@($stageResults|ForEach-Object{[pscustomobject]@{Id=$_.Id;Hash=$_.Hash}})}|Out-Null
+        $tx.State='Verified'
         try{& wsl.exe --terminate $builderName 2>$null|Out-Null}catch{};try{& wsl.exe --unregister $builderName 2>$null|Out-Null}catch{}
         if($OnProgress){&$OnProgress 100 "Track $Distro verified; ready for atomic commit."}
         [pscustomobject][ordered]@{Success=$true;Transaction=$tx;TrackRoot=$trackRoot;FinalHash=$finalHash;Stages=$stageResults}
