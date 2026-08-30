@@ -8,6 +8,18 @@ A Track (`Ubuntu0`, `Debian0`, `Fedora0`, `ArchLinux0`, `openSUSE0`) is a verifi
 
 A Profile (`Debian1`, `Debian2`, etc.) is an independent WSL environment built from its distro's verified Track.
 
+### Separation invariant
+Track and Profile are separate lifecycles with separate responsibilities and committed stores.
+
+- **Track acquires and implements** reusable distro resources, verifies dependencies, and produces a verified Track.
+- **Profile only implements** from an already verified Track; it does not reacquire Track-managed dependencies.
+- A Track does not create, depend on, or become a Profile.
+- A Profile does not create, modify, or replace its source Track.
+- Track and Profile transactions have distinct transaction kinds and remain isolated until their own acceptance succeeds.
+- A Track may be consumed by multiple Profiles; Profile creation must not mutate the committed Track.
+
+Shared engine helpers are permitted, but Track acquisition/verification responsibilities must not move into Profile creation and Profile state must not become Track state.
+
 ## Track state machine
 Each Track stage follows:
 
@@ -15,7 +27,7 @@ Each Track stage follows:
 2. Acquire/download the stage resources using the distro-specific implementation.
 3. Run the distro-specific Track tests.
 4. Generate and persist the stage hash only after all required tests pass.
-5. Make the next eligible DAG stages runnable.
+5. Make the next eligible stages runnable.
 
 The final Track hash is generated only after the complete Track acceptance suite passes.
 
@@ -30,6 +42,9 @@ A Profile uses an already verified Track. It consumes Track artifacts locally ra
 6. Atomically commit the Profile and release the reservation.
 
 A Profile does not become a persistent record while the attempt is running.
+
+## Transaction promotion
+Track and Profile attempts are the actual in-progress state. On success, the accepted transaction state is promoted to its committed destination; on failure, that same transaction state is preserved in `Troubleshoot`. The destination is not reconstructed from a recipe or summary. If a storage boundary requires controlled copying/finalization, it must preserve the exact transaction contents and identity.
 
 ## DAG scheduling
 Distro definitions declare prerequisites and produced capabilities. The scheduler derives safe parallelism from that graph instead of hard-coding execution order per distro.
