@@ -11,19 +11,17 @@
 . (Join-Path $PSScriptRoot '..\Engine\AtomicCommit.ps1')
 
 function Export-DistroShelfTrackStageArtifact {
-    param([Parameter(Mandatory)][string]$Distro,[Parameter(Mandatory)][string]$StageId,[Parameter(Mandatory)][string]$WslName,[Parameter(Mandatory)][string]$Destination)
-    $manager=(Get-DistroShelfDistroDefinition -Distro $Distro).PackageManager
-    switch($StageId){
-        'podman' { switch($manager){'apt'{Export-DistroShelfAptCache -WslName $WslName -Destination $Destination|Out-Null}'dnf'{Export-DistroShelfDnfCache -WslName $WslName -Destination $Destination|Out-Null}'pacman'{Export-DistroShelfPacmanCache -WslName $WslName -Destination $Destination|Out-Null}'zypper'{Export-DistroShelfZypperCache -WslName $WslName -Destination $Destination|Out-Null} default{throw "No package artifact exporter for package manager '$manager'."}}}
-        'distrobox' { switch($manager){'apt'{Export-DistroShelfAptCache -WslName $WslName -Destination $Destination|Out-Null}'dnf'{Export-DistroShelfDnfCache -WslName $WslName -Destination $Destination|Out-Null}'pacman'{Export-DistroShelfPacmanCache -WslName $WslName -Destination $Destination|Out-Null}'zypper'{Export-DistroShelfZypperCache -WslName $WslName -Destination $Destination|Out-Null} default{throw "No package artifact exporter for package manager '$manager'."}}}
-        'flatpak' { switch($manager){'apt'{Export-DistroShelfAptCache -WslName $WslName -Destination $Destination|Out-Null}'dnf'{Export-DistroShelfDnfCache -WslName $WslName -Destination $Destination|Out-Null}'pacman'{Export-DistroShelfPacmanCache -WslName $WslName -Destination $Destination|Out-Null}'zypper'{Export-DistroShelfZypperCache -WslName $WslName -Destination $Destination|Out-Null} default{throw "No package artifact exporter for package manager '$manager'."}}}
-        'terminals' { switch($manager){'apt'{Export-DistroShelfAptCache -WslName $WslName -Destination $Destination|Out-Null}'dnf'{Export-DistroShelfDnfCache -WslName $WslName -Destination $Destination|Out-Null}'pacman'{Export-DistroShelfPacmanCache -WslName $WslName -Destination $Destination|Out-Null}'zypper'{Export-DistroShelfZypperCache -WslName $WslName -Destination $Destination|Out-Null} default{throw "No package artifact exporter for package manager '$manager'."}}}
-        default {
-            if([string]::IsNullOrWhiteSpace([string]$stageId)){throw 'Track stage ID is required.'}
-            throw "Track artifact export strategy is not yet defined for stage '$stageId'."
-        }
+    param([Parameter(Mandatory)][string]$Distro,[Parameter(Mandatory)]$Stage,[Parameter(Mandatory)][string]$WslName,[Parameter(Mandatory)][string]$Destination)
+    $type=[string]$Stage.Track.ExportType;$value=[string]$Stage.Track.ExportValue;$manager=(Get-DistroShelfDistroDefinition -Distro $Distro).PackageManager
+    switch($type){
+        'apt-cache' { Export-DistroShelfAptCache -WslName $WslName -Destination $Destination|Out-Null }
+        'rpm-cache' { switch($manager){'dnf'{Export-DistroShelfDnfCache -WslName $WslName -Destination $Destination|Out-Null}'zypper'{Export-DistroShelfZypperCache -WslName $WslName -Destination $Destination|Out-Null}default{throw "RPM exporter unavailable for '$manager'."}} }
+        'pacman-cache' { Export-DistroShelfPacmanCache -WslName $WslName -Destination $Destination|Out-Null }
+        'wsl-path' { Export-DistroShelfWslPath -WslName $WslName -WslPath $value -Destination $Destination|Out-Null }
+        'flatpak-sideload' { Export-DistroShelfFlatpakSideload -WslName $WslName -AppId $value -Destination $Destination|Out-Null }
+        default { throw "No Track artifact exporter declared for stage '$($Stage.Id)' on '$Distro'." }
     }
-    if(@(Get-ChildItem -LiteralPath $Destination -Recurse -File -ErrorAction SilentlyContinue).Count -eq 0){throw "Track stage '$StageId' produced no reusable artifacts."}
+    if(@(Get-ChildItem -LiteralPath $Destination -Recurse -File -ErrorAction SilentlyContinue).Count -eq 0){throw "Track stage '$($Stage.Id)' produced no reusable artifacts."}
 }
 
 function Invoke-DistroShelfTrackBuilder {
@@ -47,22 +45,20 @@ function Invoke-DistroShelfTrackBuilder {
         $verified=@{rootfs=$rootHash}
         Write-DistroShelfHashRecord -Path (Join-Path (Join-Path $trackRoot 'metadata') 'rootfs.hash.json') -Stage 'rootfs' -Hash $rootHash -TestResult $rootTests|Out-Null
         $stageResults=@([pscustomobject]@{Id='rootfs';Hash=$rootHash;Tests=$rootTests})
-        $stages=@($definition.Stages|Where-Object{[string]$_.Id-ne 'rootfs'})
+        $remaining=@($definition.Stages|Where-Object{[string]$_.Id-ne 'rootfs'})
         Test-DistroShelfDag -Stages @($definition.Stages)|Out-Null
-        $remaining=$stages
         while($remaining.Count){
             $ready=@($remaining|Where-Object{@($_.Depends|Where-Object{-not $verified.ContainsKey([string]$_)}).Count-eq 0})
             if(!$ready.Count){throw 'Track DAG is blocked: a required prerequisite hash is missing.'}
             foreach($stage in $ready){
                 $id=[string]$stage.Id;$stageRoot=Join-Path $trackRoot ($id -replace ':','-');New-Item -ItemType Directory -Path $stageRoot -Force|Out-Null
                 & $emit 20 "Acquiring and testing Track stage '$id'..."
-                if(-not $stage.Track){throw "Track stage '$id' has no Track implementation for '$Distro'."}
-                foreach($cmd in @($stage.Track.Acquire)){$r=Invoke-DistroShelfCommand -WslName $builderName -Command ([string]$cmd) -CaptureOutput;if($r.ExitCode-ne 0){throw "Track stage '$id' acquisition failed: $cmd`n$($r.Output)"}}
-                foreach($cmd in @($stage.Track.Install)){$r=Invoke-DistroShelfCommand -WslName $builderName -Command ([string]$cmd) -CaptureOutput;if($r.ExitCode-ne 0){throw "Track stage '$id' installation failed: $cmd`n$($r.Output)"}}
+                if(-not $stage.Track){throw "Track stage '$id' has no implementation for '$Distro'."}
+                foreach($cmd in @($stage.Track.Acquire)){if(-not [string]::IsNullOrWhiteSpace([string]$cmd)){$r=Invoke-DistroShelfCommand -WslName $builderName -Command ([string]$cmd) -CaptureOutput;if($r.ExitCode-ne 0){throw "Track stage '$id' acquisition failed: $cmd`n$($r.Output)"}}}
+                foreach($cmd in @($stage.Track.Install)){if(-not [string]::IsNullOrWhiteSpace([string]$cmd)){$r=Invoke-DistroShelfCommand -WslName $builderName -Command ([string]$cmd) -CaptureOutput;if($r.ExitCode-ne 0){throw "Track stage '$id' installation failed: $cmd`n$($r.Output)"}}}
                 $tests=@($stage.Track.Tests);if(!$tests.Count){throw "Track stage '$id' has no functional tests for '$Distro'."}
-                $testResult=Invoke-DistroShelfStageTests -WslName $builderName -Tests $tests
-                if(-not $testResult.Passed){throw "Track stage '$id' failed verification."}
-                Export-DistroShelfTrackStageArtifact -Distro $Distro -StageId $id -WslName $builderName -Destination $stageRoot
+                $testResult=Invoke-DistroShelfStageTests -WslName $builderName -Tests $tests;if(-not $testResult.Passed){throw "Track stage '$id' failed verification."}
+                Export-DistroShelfTrackStageArtifact -Distro $Distro -Stage $stage -WslName $builderName -Destination $stageRoot
                 $hash=Get-DistroShelfTreeHash -Root $stageRoot
                 Write-DistroShelfHashRecord -Path (Join-Path (Join-Path $trackRoot 'metadata') "$($id -replace ':','-').hash.json") -Stage $id -Hash $hash -TestResult $testResult|Out-Null
                 $verified[$id]=$hash;$stageResults+=[pscustomobject]@{Id=$id;Hash=$hash;Tests=$testResult}
@@ -74,7 +70,7 @@ function Invoke-DistroShelfTrackBuilder {
         $final=Invoke-DistroShelfTrackAcceptance -WslName $builderName -Tests $finalTests
         $finalHash=Get-DistroShelfTreeHash -Root $trackRoot -ExcludeRelativePath @('metadata/track.hash.json','metadata/track.json')
         Write-DistroShelfHashRecord -Path (Join-Path (Join-Path $trackRoot 'metadata') 'track.hash.json') -Stage 'track' -Hash $finalHash -TestResult $final|Out-Null
-        $manifest=[ordered]@{SchemaVersion=3;Distro=$Distro;Track=$definition.Track;FinalHash=$finalHash;Stages=$stageResults;CreatedAt=[DateTime]::UtcNow.ToString('o')}
+        $manifest=[ordered]@{SchemaVersion=4;Distro=$Distro;Track=$definition.Track;FinalHash=$finalHash;Stages=$stageResults;CreatedAt=[DateTime]::UtcNow.ToString('o')}
         $manifest|ConvertTo-Json -Depth 30|Set-Content -LiteralPath (Join-Path $trackRoot 'metadata\track.json') -Encoding UTF8
         try{& wsl.exe --terminate $builderName 2>$null|Out-Null}catch{};try{& wsl.exe --unregister $builderName 2>$null|Out-Null}catch{}
         & $emit 100 "Track $Distro verified; ready for atomic commit."
@@ -84,10 +80,4 @@ function Invoke-DistroShelfTrackBuilder {
         return [pscustomobject][ordered]@{Success=$false;Transaction=$tx;TroubleshootPath=$tr;Error=$_.Exception.Message}
     }
 }
-function Commit-DistroShelfTrackTransaction {
-    param([Parameter(Mandatory)]$BuildResult)
-    if(-not $BuildResult.Success){throw 'Cannot commit a failed Track transaction.'}
-    $target=(Get-DistroShelfTrackDefinition $BuildResult.Transaction.Distro).Root
-    Move-DistroShelfDirectoryAtomic -Source $BuildResult.TrackRoot -Destination $target
-    [pscustomobject][ordered]@{Success=$true;Distro=$BuildResult.Transaction.Distro;Track=(Split-Path -Leaf $target);Root=$target;FinalHash=$BuildResult.FinalHash}
-}
+function Commit-DistroShelfTrackTransaction {param([Parameter(Mandatory)]$BuildResult) if(-not $BuildResult.Success){throw 'Cannot commit a failed Track transaction.'};$target=(Get-DistroShelfTrackDefinition $BuildResult.Transaction.Distro).Root;Move-DistroShelfDirectoryAtomic -Source $BuildResult.TrackRoot -Destination $target;[pscustomobject][ordered]@{Success=$true;Distro=$BuildResult.Transaction.Distro;Track=(Split-Path -Leaf $target);Root=$target;FinalHash=$BuildResult.FinalHash}}
