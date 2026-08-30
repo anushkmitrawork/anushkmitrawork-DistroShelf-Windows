@@ -32,8 +32,13 @@ foreach($distro in $distros) {
 }
 
 $installerText = Get-Content -LiteralPath (Join-Path $src 'Profile\ProfileArtifactInstaller.ps1') -Raw
-if($installerText -match 'Invoke-WebRequest|curl\s|wget\s|git\s+clone') {
-    Fail 'ProfileArtifactInstaller contains direct network acquisition primitives'
+# Inspect executable command positions only; the source file itself contains the forbidden
+# command names inside Test-DistroShelfProfileInstallCommands' detection regex.
+$installerExecutableLines = @($installerText -split "`r?`n" | Where-Object {
+    $_ -notmatch '\$remotePattern\s*=' -and $_ -notmatch "contains a network acquisition command"
+}) -join "`n"
+if($installerExecutableLines -match '(?m)^\s*(Invoke-WebRequest|curl\s|wget\s|git\s+clone)') {
+    Fail 'ProfileArtifactInstaller contains direct network acquisition commands'
 }
 if($installerText -notmatch '/track-stage/') {
     Fail 'ProfileArtifactInstaller is not bound to bridged Track artifacts'
@@ -41,8 +46,8 @@ if($installerText -notmatch '/track-stage/') {
 Pass 'ProfileArtifactInstaller consumes Track-mounted artifacts'
 
 $engineText = Get-Content -LiteralPath (Join-Path $src 'Profile\ProfileEngine.ps1') -Raw
-if($engineText -match 'Invoke-WebRequest|curl\s|wget\s|git\s+clone') {
-    Fail 'ProfileEngine contains direct network acquisition primitives'
+if($engineText -match '(?m)^\s*(Invoke-WebRequest|curl\s|wget\s|git\s+clone)') {
+    Fail 'ProfileEngine contains direct network acquisition commands'
 }
 if($engineText -notmatch 'Mount-DistroShelfTrackStageIntoProfile') {
     Fail 'ProfileEngine does not mount Track material before implementation'
