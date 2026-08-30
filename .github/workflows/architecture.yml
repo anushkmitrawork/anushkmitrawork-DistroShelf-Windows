@@ -16,3 +16,6 @@ jobs:
       - name: Run Profile atomicity tests
         shell: pwsh
         run: ./tests/ProfileAtomicity.Tests.ps1
+      - name: Run Track atomicity tests
+        shell: pwsh
+        run: ./tests/TrackAtomicity.Tests.ps1
