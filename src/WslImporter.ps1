@@ -12,6 +12,15 @@ function Invoke-DistroShelfWslImport {
     New-Item -ItemType Directory -Path $installLocation -Force|Out-Null
     & wsl.exe --import $Profile.WslName $installLocation $RootfsPath --version 2;if($LASTEXITCODE-ne 0){throw "WSL import failed for '$($Profile.WslName)' with exit code $LASTEXITCODE."}
 
+    # Enable systemd for Ubuntu 22.04+ (required for proper service/user session startup)
+    try {
+        & wsl.exe --distribution $Profile.WslName -- bash -lc "mkdir -p /etc; echo '[boot]' | tee /etc/wsl.conf; echo 'systemd=true' | tee -a /etc/wsl.conf" 2>&1 | Out-Null
+        & wsl.exe --terminate $Profile.WslName 2>$null | Out-Null
+        Start-Sleep -Seconds 2
+    } catch {
+        # non-fatal if systemd config fails
+    }
+
     $registered=$false;$lastVerify=''
     for($attempt=0;$attempt-lt20;$attempt++){
         $verify=@(& wsl.exe --list --verbose 2>&1)-join "`n"
