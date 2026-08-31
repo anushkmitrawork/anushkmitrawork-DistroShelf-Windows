@@ -2,7 +2,15 @@
 
 function Invoke-DistroShelfTestCommand {
     param([Parameter(Mandatory)][string]$WslName,[Parameter(Mandatory)][object]$Test)
-    $output = & wsl.exe --distribution $WslName -- bash -lc ([string]$Test.Command) 2>&1
+    # Run under local 'Continue' so native stderr under $ErrorActionPreference='Stop'
+    # does not become a terminating RemoteException in PowerShell 5.1.
+    $savedEAP=$ErrorActionPreference
+    try {
+        $ErrorActionPreference='Continue'
+        $output=[string[]]((& wsl.exe --distribution $WslName -- bash -lc ([string]$Test.Command)) 2>&1 | ForEach-Object { "$_" })
+    } finally {
+        $ErrorActionPreference=$savedEAP
+    }
     $exitCode = $LASTEXITCODE
     $expected = if($null -ne $Test.ExpectedExitCode){[int]$Test.ExpectedExitCode}else{0}
     $passed = $exitCode -eq $expected
