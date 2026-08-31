@@ -3,7 +3,16 @@
 function Invoke-DistroShelfCommand {
     param([Parameter(Mandatory)][string]$WslName,[Parameter(Mandatory)][string]$Command,[switch]$CaptureOutput)
     if([string]::IsNullOrWhiteSpace($Command)){throw 'Command cannot be empty.'}
-    $output=& wsl.exe --distribution $WslName -- bash -lc $Command 2>&1
+    # Run under local 'Continue' so native stderr under $ErrorActionPreference='Stop'
+    # does not become a terminating RemoteException in PowerShell 5.1.
+    # Pipe through ForEach-Object to stringify any remaining error records.
+    $savedEAP=$ErrorActionPreference
+    try {
+        $ErrorActionPreference='Continue'
+        $output=[string[]]((& wsl.exe --distribution $WslName -- bash -lc $Command) 2>&1 | ForEach-Object { "$_" })
+    } finally {
+        $ErrorActionPreference=$savedEAP
+    }
     $code=$LASTEXITCODE
     $result=[pscustomobject][ordered]@{ExitCode=$code;Output=(@($output)-join "`n")}
     if($CaptureOutput){return $result}
