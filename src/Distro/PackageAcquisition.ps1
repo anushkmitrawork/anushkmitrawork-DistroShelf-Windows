@@ -49,7 +49,10 @@ function New-DistroShelfTerminalStage {
     )
     $stage=New-DistroShelfPackageStage -Id $Id -Manager $Manager -Packages @($PackageName) -Tests @(
         (New-StageTest "$TerminalName-command" "command -v $Executable"),
-        (New-StageTest "$TerminalName-version" "$Executable --version")
+        # Run headless-safe version check. Qt/KDE terminals (e.g. Konsole) abort with
+        # "QThreadStorage: entry N destroyed" when launched without a display, so force
+        # Qt's offscreen platform plugin. Harmless for non-Qt terminals.
+        (New-StageTest "$TerminalName-version" "QT_QPA_PLATFORM=offscreen $Executable --version")
     ) -ParallelGroup 'terminals'
     $stage | Add-Member -NotePropertyName Kind -NotePropertyValue 'terminal' -Force
     $stage | Add-Member -NotePropertyName TerminalName -NotePropertyValue $TerminalName -Force
