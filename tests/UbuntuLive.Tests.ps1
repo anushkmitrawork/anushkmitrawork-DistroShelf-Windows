@@ -43,7 +43,7 @@ $trackDef=Get-DistroShelfTrackDefinition -Distro 'Ubuntu'
 if(Test-Path -LiteralPath $trackDef.Root){Fail 'Refusing live run because committed Ubuntu Track 0 already exists; remove it only through a deliberate test reset.'}
 Pass 'Ubuntu Track 0 is absent before live build'
 
-$trackBuild=Invoke-DistroShelfTrackBuilder -Distro 'Ubuntu' -MaxConcurrency 1 -OnProgress {param($p,$m)Write-Host ("[TRACK {0,3}%] {1}" -f [int]$p,$m)}
+$trackBuild=Invoke-DistroShelfTrackBuilder -Distro 'Ubuntu' -OnProgress {param($p,$m)Write-Host ("[TRACK {0,3}%] {1}" -f [int]$p,$m)}
 if(-not $trackBuild.Success){Fail "Ubuntu Track build failed: $($trackBuild.Error)`nTroubleshoot: $($trackBuild.TroubleshootPath)"}
 if(@($trackBuild.Stages).Count -ne @($provider.Stages).Count){Fail "Verified stage count mismatch: $(@($trackBuild.Stages).Count)/$(@($provider.Stages).Count)"}
 if([string]$trackBuild.FinalHash -notmatch '^[0-9a-f]{64}$'){Fail 'Ubuntu Track final hash is not SHA-256.'}
