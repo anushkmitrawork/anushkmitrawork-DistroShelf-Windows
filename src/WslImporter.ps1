@@ -25,8 +25,10 @@ function Invoke-DistroShelfWslImport {
         # Write wsl.conf with systemd enabled
         "[boot]" | Out-File -FilePath $wslConfUnc -Encoding ascii -Force
         "systemd=true" | Out-File -FilePath $wslConfUnc -Encoding ascii -Append
-        # Full WSL shutdown ensures the distro restarts cleanly with systemd
-        & wsl.exe --shutdown 2>$null | Out-Null
+        # Targeted terminate of JUST the track-builder distro (not global --shutdown).
+        # This reloads wsl.conf for systemd without affecting other WSL distros
+        # the user may have running (e.g., a manually installed DistroShelf app).
+        & wsl.exe --terminate $Profile.WslName 2>$null | Out-Null
         Start-Sleep -Seconds 3
     } catch {
         # Non-fatal: if UNC write fails, the verification loop below will catch it
