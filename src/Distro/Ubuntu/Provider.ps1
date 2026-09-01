@@ -27,7 +27,13 @@ function New-DistroShelfUbuntuProvider {
         (New-StageTest 'flatpak-version' 'flatpak --version')
         (New-StageTest 'flatpak-remotes' 'flatpak remotes --columns=name')
     )
-    $p=New-DistroShelfPackageStage 'podman' 'apt' @('podman') $pod 'container-runtime'
+    $p=New-DistroShelfPackageStage 'podman' 'apt' @('podman','crun') $pod 'container-runtime'
+    # Ensure podman machine is initialized so podman run works in TrackFinalTests
+    $p.Track.Install=@(
+        'mkdir -p /tmp/ds-podman/packages; apt-get update; apt-get --download-only -y -o Dir::Cache::archives=/tmp/ds-podman/packages install podman crun',
+        'apt-get -y --no-download -o Dir::Cache::archives=/tmp/ds-podman/packages install podman crun',
+        'podman machine init --now 2>/dev/null || true'
+    )
     $d=New-DistroShelfPackageStage 'distrobox' 'apt' @('distrobox') $db 'container-runtime';$d.Depends=@('rootfs','podman')
     $f=New-DistroShelfPackageStage 'flatpak' 'apt' @('flatpak') $fp 'desktop-runtime'
     $terminalStages=@(
