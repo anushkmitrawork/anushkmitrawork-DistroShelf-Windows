@@ -61,7 +61,15 @@ function Invoke-DistroShelfProfileBuild {
         & $emit 90 'Exporting the accepted Profile exactly once...'
         $export=Join-Path $tx.Root 'Export\profile.vhdx'
         New-Item -ItemType Directory -Path (Split-Path -Parent $export) -Force|Out-Null
-        & wsl.exe --export $Candidate.WslName $export --format vhd 2>&1|Out-Null
+        # Run under local 'Continue' so native stderr under $ErrorActionPreference='Stop'
+        # does not become a terminating RemoteException in PowerShell 5.1.
+        $savedEAP=$ErrorActionPreference
+        try {
+            $ErrorActionPreference='Continue'
+            & wsl.exe --export $Candidate.WslName $export --format vhd 2>&1|ForEach-Object { "$_" }|Out-Null
+        } finally {
+            $ErrorActionPreference=$savedEAP
+        }
         if($LASTEXITCODE-ne 0 -or -not(Test-Path -LiteralPath $export -PathType Leaf)){throw "Failed to export accepted Profile '$($Candidate.WslName)'."}
         $exportHash=(Get-FileHash -LiteralPath $export -Algorithm SHA256).Hash.ToLowerInvariant()
         if([string]::IsNullOrWhiteSpace($exportHash)){throw "Failed to hash exported Profile '$($Candidate.WslName)'."}
