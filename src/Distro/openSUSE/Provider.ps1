@@ -26,7 +26,7 @@ function New-DistroShelfOpenSUSEProvider {
     $fl=New-StageContract 'flathub' @('rootfs','flatpak') 'zypper' @('mkdir -p /tmp/ds-flathub; curl -fsSL https://dl.flathub.org/repo/flathub.flatpakrepo -o /tmp/ds-flathub/flathub.flatpakrepo') @('flatpak remote-add --if-not-exists flathub /tmp/ds-flathub/flathub.flatpakrepo') @(New-StageTest 'flathub-remote' 'flatpak remotes --columns=name | grep -Fx flathub') @() @(New-StageTest 'flathub-remote' 'flatpak remotes --columns=name | grep -Fx flathub') 'wsl-path' '/tmp/ds-flathub' 'dependency' 'desktop-runtime' 'flatpak'
     $ds=New-StageContract 'distroshelf' @('rootfs','distrobox','flatpak','flathub') 'zypper' @('flatpak install -y flathub com.ranfdev.DistroShelf') @() @(New-StageTest 'distroshelf-install' 'flatpak info com.ranfdev.DistroShelf') @('flatpak install -y --sideload-repo=TRACK_SIDELOAD flathub com.ranfdev.DistroShelf') @(New-StageTest 'distroshelf-install' 'flatpak info com.ranfdev.DistroShelf') 'flatpak-sideload' 'com.ranfdev.DistroShelf' 'dependency' 'apps' 'flatpak'
     [pscustomobject][ordered]@{SchemaVersion=4;Distro='openSUSE';Track='openSUSE0';PackageManager='zypper';Rootfs=@{Name='openSUSE';Architecture='amd64'};Stages=@($root,$p,$d,$f,$fl,$ds)+$terminalStages;TrackFinalTests=@(
-        (New-StageTest 'podman-functional' 'podman run --rm quay.io/podman/hello true')
+        (New-StageTest 'podman-functional' 'podman run --rm quay.io/podman/hello')
         (New-StageTest 'distrobox-final' 'distrobox list')
         (New-StageTest 'flatpak-final' 'flatpak info com.ranfdev.DistroShelf')
     );ProfileFinalTests=@(
