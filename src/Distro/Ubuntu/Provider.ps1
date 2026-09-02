@@ -27,13 +27,7 @@ function New-DistroShelfUbuntuProvider {
         (New-StageTest 'flatpak-version' 'flatpak --version')
         (New-StageTest 'flatpak-remotes' 'flatpak remotes --columns=name')
     )
-    $p=New-DistroShelfPackageStage 'podman' 'apt' @('podman','crun') $pod 'container-runtime'
-    # Ensure podman machine is initialized so podman run works in TrackFinalTests
-    $p.Track.Install=@(
-        'mkdir -p /tmp/ds-podman/packages; apt-get update; apt-get --download-only -y -o Dir::Cache::archives=/tmp/ds-podman/packages install podman crun',
-        'apt-get -y --no-download -o Dir::Cache::archives=/tmp/ds-podman/packages install podman crun',
-        'podman machine init --now 2>/dev/null || true'
-    )
+    $p=New-DistroShelfPackageStage 'podman' 'apt' @('podman') $pod 'container-runtime'
     $d=New-DistroShelfPackageStage 'distrobox' 'apt' @('distrobox') $db 'container-runtime';$d.Depends=@('rootfs','podman')
     $f=New-DistroShelfPackageStage 'flatpak' 'apt' @('flatpak') $fp 'desktop-runtime'
     $terminalStages=@(
@@ -46,7 +40,7 @@ function New-DistroShelfUbuntuProvider {
     $fl=New-StageContract 'flathub' @('rootfs','flatpak') 'apt' @('mkdir -p /tmp/ds-flathub; curl -fsSL https://dl.flathub.org/repo/flathub.flatpakrepo -o /tmp/ds-flathub/flathub.flatpakrepo') @('flatpak remote-add --if-not-exists flathub /tmp/ds-flathub/flathub.flatpakrepo','flatpak remote-modify --collection-id=org.flathub.Stable flathub') @(New-StageTest 'flathub-remote' 'flatpak remotes --columns=name | grep -Fx flathub') @('flatpak remote-modify --collection-id=org.flathub.Stable flathub') @(New-StageTest 'flathub-remote' 'flatpak remotes --columns=name | grep -Fx flathub') 'wsl-path' '/tmp/ds-flathub' 'dependency' 'desktop-runtime' 'flatpak'
     $ds=New-StageContract 'distroshelf' @('rootfs','distrobox','flatpak','flathub') 'apt' @('flatpak remote-modify --collection-id=org.flathub.Stable flathub','flatpak install -y flathub com.ranfdev.DistroShelf') @() @(New-StageTest 'distroshelf-install' 'flatpak info com.ranfdev.DistroShelf') @('flatpak remote-modify --collection-id=org.flathub.Stable flathub','flatpak install -y --sideload-repo=TRACK_SIDELOAD flathub com.ranfdev.DistroShelf') @(New-StageTest 'distroshelf-install' 'flatpak info com.ranfdev.DistroShelf') 'flatpak-sideload' 'com.ranfdev.DistroShelf' 'dependency' 'apps' 'flatpak'
     [pscustomobject][ordered]@{SchemaVersion=4;Distro='Ubuntu';Track='Ubuntu0';PackageManager='apt';Rootfs=@{Name='Ubuntu';Architecture='amd64'};Stages=@($root,$p,$d,$f,$fl,$ds)+$terminalStages;TrackFinalTests=@(
-        (New-StageTest 'podman-functional' 'podman run --rm quay.io/podman/hello true')
+        (New-StageTest 'podman-functional' 'podman run --rm quay.io/podman/hello')
         (New-StageTest 'distrobox-final' 'distrobox list')
         (New-StageTest 'flatpak-final' 'flatpak info com.ranfdev.DistroShelf')
     );ProfileFinalTests=@(
