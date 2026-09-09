@@ -13,33 +13,33 @@ function Invoke-DistroShelfWslImport {
     & wsl.exe --import $Profile.WslName $installLocation $RootfsPath --version 2;if($LASTEXITCODE-ne 0){throw "WSL import failed for '$($Profile.WslName)' with exit code $LASTEXITCODE."}
 
     # Enable systemd via Windows UNC path (does NOT require the distro to be running).
-    # Ubuntu 22.04+ rootfs requires systemd for user session startup; without this,
-    # every bash -lc invocation fails with "Failed to start the systemd user session".
+    # Modern Linux distributions require systemd; without this, user sessions and services fail.
     $wslConfUnc = "\\wsl$\$($Profile.WslName)\etc\wsl.conf"
     try {
-        # Ensure /etc directory exists (it always should in a Linux rootfs)
         $etcDir = "\\wsl$\$($Profile.WslName)\etc"
         if(-not (Test-Path -LiteralPath $etcDir -PathType Container)){
             New-Item -ItemType Directory -Path $etcDir -Force | Out-Null
         }
-        # Write wsl.conf with systemd enabled
         "[boot]" | Out-File -FilePath $wslConfUnc -Encoding ascii -Force
         "systemd=true" | Out-File -FilePath $wslConfUnc -Encoding ascii -Append
-        # Targeted terminate of JUST the track-builder distro (not global --shutdown).
-        # This reloads wsl.conf for systemd without affecting other WSL distros
-        # the user may have running (e.g., a manually installed DistroShelf app).
         & wsl.exe --terminate $Profile.WslName 2>$null | Out-Null
         Start-Sleep -Seconds 3
     } catch {
-        # Non-fatal: if UNC write fails, the verification loop below will catch it
+        # Non-fatal: if UNC write fails, the probe loop below will verify boot
     }
 
     $registered=$false;$lastVerify=''
+    $savedEAP=$ErrorActionPreference
     for($attempt=0;$attempt-lt20;$attempt++){
         $verify=@(& wsl.exe --list --verbose 2>&1)-join "`n"
         $quiet=@(& wsl.exe --list --quiet 2>&1)|ForEach-Object{($_-replace "`0",'').Trim()}|Where-Object{$_}
         if(($quiet -contains [string]$Profile.WslName) -or ($verify -match [regex]::Escape([string]$Profile.WslName))){
-            $probe=& wsl.exe --distribution $Profile.WslName -- bash -lc 'true' 2>&1
+            try {
+                $ErrorActionPreference='Continue'
+                $probe=[string[]]((& wsl.exe --distribution $Profile.WslName -- bash -lc 'true') 2>&1 | ForEach-Object { "$_" })
+            } finally {
+                $ErrorActionPreference=$savedEAP
+            }
             if($LASTEXITCODE -eq 0){$registered=$true;break}
             $lastVerify=($probe -join "`n")
         }else{$lastVerify=$verify}
