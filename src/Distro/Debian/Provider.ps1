@@ -27,10 +27,21 @@ function New-DistroShelfDebianProvider {
         (New-StageTest 'architecture' 'test "$(uname -m)" = "x86_64"')
     )
 
-    # Initial fix for legacy Bullseye rootfs to ensure valid repositories and distrobox availability.
-    $aptFix=New-StageContract 'apt-fix' @('rootfs') 'apt' @('sed -i "s/bullseye/bookworm/g" /etc/apt/sources.list', 'sed -i "s/bullseye/bookworm/g" /etc/apt/sources.list.d/*.list', 'apt-get update -o Acquire::Check-Valid-Until=false') @() @(New-StageTest 'apt-workable' 'apt-get update') @() @() 'wsl-path' '/etc/apt' 'dependency' 'rootfs' 'apt'
+    # Bulletproof Bookworm sources list generation
+    $aptFixCmds=@(
+        'cat << "EOF" > /etc/apt/sources.list
+deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware
+deb http://deb.debian.org/debian bookworm-updates main contrib non-free non-free-firmware
+deb http://security.debian.org/debian-security bookworm-security main contrib non-free non-free-firmware
+EOF',
+        'rm -rf /etc/apt/sources.list.d/*',
+        'apt-get clean',
+        'apt-get update -o Acquire::Check-Valid-Until=false'
+    )
 
-    $p=New-DistroShelfPackageStage 'podman' 'apt' @('podman') $pod 'container-runtime';$p.Depends=@('apt-fix')
+    $aptFix=New-StageContract 'apt-fix' @('rootfs') 'apt' $aptFixCmds @() @(New-StageTest 'apt-workable' 'apt-get update') @() @() 'wsl-path' '/etc/apt' 'dependency' 'rootfs' 'apt'
+
+    $p=New-DistroShelfPackageStage 'podman' 'apt' @('podman','crun') $pod 'container-runtime';$p.Depends=@('apt-fix')
     $d=New-DistroShelfPackageStage 'distrobox' 'apt' @('distrobox') $db 'container-runtime';$d.Depends=@('apt-fix','podman')
     $f=New-DistroShelfPackageStage 'flatpak' 'apt' @('flatpak') $fp 'desktop-runtime';$f.Depends=@('apt-fix')
     $terminalStages=@(
