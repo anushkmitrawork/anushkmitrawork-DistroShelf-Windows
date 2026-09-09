@@ -27,16 +27,9 @@ function New-DistroShelfDebianProvider {
         (New-StageTest 'architecture' 'test "$(uname -m)" = "x86_64"')
     )
 
-    # Bulletproof Bookworm sources list generation
+    # Completely rewrite sources.list and wipe any external repo files in one multi-command line
     $aptFixCmds=@(
-        'cat << "EOF" > /etc/apt/sources.list
-deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware
-deb http://deb.debian.org/debian bookworm-updates main contrib non-free non-free-firmware
-deb http://security.debian.org/debian-security bookworm-security main contrib non-free non-free-firmware
-EOF',
-        'rm -rf /etc/apt/sources.list.d/*',
-        'apt-get clean',
-        'apt-get update -o Acquire::Check-Valid-Until=false'
+        'printf "deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware\ndeb http://deb.debian.org/debian bookworm-updates main contrib non-free non-free-firmware\ndeb http://security.debian.org/debian-security bookworm-security main contrib non-free non-free-firmware\n" > /etc/apt/sources.list && rm -rf /etc/apt/sources.list.d/* && apt-get clean && apt-get update'
     )
 
     $aptFix=New-StageContract 'apt-fix' @('rootfs') 'apt' $aptFixCmds @() @(New-StageTest 'apt-workable' 'apt-get update') @() @(New-StageTest 'apt-workable' 'test -f /etc/apt/sources.list') 'wsl-path' '/etc/apt' 'dependency' 'rootfs' 'apt'
