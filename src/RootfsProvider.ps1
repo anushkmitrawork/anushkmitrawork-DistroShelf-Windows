@@ -12,7 +12,13 @@ function Get-DistroShelfRootfsProvider {
     if(!$e -or !$e.Amd64Url.Url -or !$e.Amd64Url.Sha256){throw "Official WSL manifest has no verified AMD64 artifact for '$Distro'."}
     [pscustomobject][ordered]@{Distro=$Distro;Name=$e.Name;FriendlyName=$e.FriendlyName;Architecture='amd64';Url=$e.Amd64Url.Url;Sha256=($e.Amd64Url.Sha256-replace'^0x','').ToLowerInvariant()}
 }
-function Get-DistroShelfStorePackageUrl {param([Parameter(Mandatory)][string]$Distro)$m=Get-DistroShelfRootfsManifest;$e=@($m.Distributions)|?{$_.Name-eq$Distro-and$_.Amd64PackageUrl}|Select-Object -First 1;return if($e){[string]$e.Amd64PackageUrl}else{$null}}
+function Get-DistroShelfStorePackageUrl {
+    param([Parameter(Mandatory)][string]$Distro)
+    $m=Get-DistroShelfRootfsManifest
+    $e=@($m.Distributions)|Where-Object{$_.Name-eq$Distro-and$_.Amd64PackageUrl}|Select-Object -First 1
+    if($e){return [string]$e.Amd64PackageUrl}
+    return $null
+}
 function Expand-DistroShelfPackageToRootfs {param([Parameter(Mandatory)][string]$PackagePath,[Parameter(Mandatory)][string]$DestinationDirectory)Add-Type -AssemblyName System.IO.Compression.FileSystem;$outer=Join-Path $DestinationDirectory 'bundle';$inner=Join-Path $DestinationDirectory 'appx';New-Item -ItemType Directory -Path $outer,$inner -Force|Out-Null;[IO.Compression.ZipFile]::ExtractToDirectory($PackagePath,$outer);$appx=Get-ChildItem $outer -Recurse -Filter '*.appx' -File|?{$_.Name-match'(x64|amd64)'}|Select-Object -First 1;if(!$appx){$appx=Get-ChildItem $outer -Recurse -Filter '*.appx' -File|Select-Object -First 1};if(!$appx){throw 'WSL package contained no Appx payload.'};[IO.Compression.ZipFile]::ExtractToDirectory($appx.FullName,$inner);$tar=Get-ChildItem $inner -Recurse -File|?{$_.Name-match'^(install|rootfs).*\.tar(\.gz|\.xz|\.zst)?$'}|Select-Object -First 1;if(!$tar){throw 'WSL Appx payload contained no supported rootfs archive.'};$tar.FullName}
 
 function Save-DistroShelfRootfs {
