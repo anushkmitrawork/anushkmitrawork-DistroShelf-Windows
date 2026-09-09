@@ -1,90 +1,57 @@
-# DistroShelf Debian Provider
-$null = . (Join-Path $PSScriptRoot '..\..\DistroProvider.ps1')
+# DistroShelf - Debian reference provider
+. (Join-Path $PSScriptRoot '..\PackageAcquisition.ps1')
 
-function Get-DistroShelfDebianProvider {
-    return [DistroShelfProvider]@{
-        Stages = @(
-            @{
-                Name = 'apt-update'
-                Invoke = {
-                    param($target, $wsl)
-                    # Debian 11 base needs archive repositories or it throws 100 on apt update.
-                    # Instead of a destructive hardcoded overwrite to bookworm, we elegantly disable expired sources natively if they fail.
-                    $r = &$wsl -d $target -u root --exec bash -c "apt-get update"
-                    if ($LASTEXITCODE -ne 0) {
-                        # Disable validity check for expired mirrors
-                        &$wsl -d $target -u root --exec bash -c "echo 'Acquire::Check-Valid-Until \"false\";' > /etc/apt/apt.conf.d/10no-check-valid-until"
-                        
-                        # Sometimes bullseye security repos 404, we comment them out so they don't break subsequent apt installs
-                        &$wsl -d $target -u root --exec bash -c "sed -i 's/^deb .*bullseye-security/#&/' /etc/apt/sources.list"
-                        
-                        &$wsl -d $target -u root --exec bash -c "apt-get update"
-                        if ($LASTEXITCODE -ne 0) { throw "apt-get update failed even after applying validity and security mirror workarounds." }
-                    }
-                }
-                Test = {
-                    param($target, $wsl)
-                    &$wsl -d $target -u root --exec bash -c "apt-cache policy >/dev/null 2>&1"
-                    return ($LASTEXITCODE -eq 0)
-                }
-            },
-            @{
-                Name = 'packages'
-                Invoke = {
-                    param($target, $wsl)
-                    # Distrobox requires curl/wget, ca-certificates, and podman.
-                    &$wsl -d $target -u root --exec bash -c 'DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends podman curl wget ca-certificates procps sudo'
-                    if ($LASTEXITCODE -ne 0) { throw "Failed to install DistroShelf Debian core dependencies." }
-                }
-                Test = {
-                    param($target, $wsl)
-                    &$wsl -d $target --exec bash -c 'command -v podman >/dev/null && command -v curl >/dev/null'
-                    return ($LASTEXITCODE -eq 0)
-                }
-            },
-            @{
-                Name = 'podman-setup'
-                Invoke = {
-                    param($target, $wsl)
-                    # Create containers.conf directly to enforce networking configuration
-                    &$wsl -d $target -u root --exec bash -c 'mkdir -p /etc/containers && echo -e "[network]\nnetwork_backend=\"netavark\"" > /etc/containers/containers.conf'
-                    if($LASTEXITCODE -ne 0){throw "Failed to configure Podman networking."}
-                }
-                Test = {
-                    param($target, $wsl)
-                    $out = &$wsl -d $target -u root --exec bash -c 'grep netavark /etc/containers/containers.conf'
-                    return ($LASTEXITCODE -eq 0 -and $out -match 'netavark')
-                }
-            },
-            @{
-                Name = 'distrobox'
-                Invoke = {
-                    param($target, $wsl)
-                    # Pulling distrobox directly via curl to support older rootfs that don't package it natively
-                    &$wsl -d $target -u root --exec bash -c 'curl -s https://raw.githubusercontent.com/89luca89/distrobox/main/install | sh -s -- --prefix /usr/local'
-                    if ($LASTEXITCODE -ne 0) { throw "Distrobox installation script failed." }
-                }
-                Test = {
-                    param($target, $wsl)
-                    &$wsl -d $target --exec bash -c 'command -v distrobox >/dev/null'
-                    return ($LASTEXITCODE -eq 0)
-                }
-            },
-            @{
-                Name = 'flatpak'
-                Invoke = {
-                    param($target, $wsl)
-                    &$wsl -d $target -u root --exec bash -c 'DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends flatpak'
-                    if ($LASTEXITCODE -ne 0) { throw "Failed to install flatpak via apt." }
-                    &$wsl -d $target -u root --exec bash -c 'flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo && flatpak remote-modify --collection-id=org.flathub.Stable flathub'
-                    if ($LASTEXITCODE -ne 0) { throw "Failed to configure flathub remote." }
-                }
-                Test = {
-                    param($target, $wsl)
-                    &$wsl -d $target --exec bash -c 'command -v flatpak >/dev/null'
-                    return ($LASTEXITCODE -eq 0)
-                }
-            }
-        )
-    }
+function New-DistroShelfDebianProvider {
+    $root=New-DistroShelfRootfsStage 'apt'
+    $root.Track.Tests=@(
+        (New-StageTest 'os-release' 'test -s /etc/os-release')
+        (New-StageTest 'architecture' 'test "$(uname -m)" = "x86_64"')
+        (New-StageTest 'apt-available' 'command -v apt-get')
+        (New-StageTest 'dpkg-available' 'command -v dpkg')
+    )
+    $root.Profile.Tests=@(
+        (New-StageTest 'os-release' 'test -s /etc/os-release')
+        (New-StageTest 'architecture' 'test "$(uname -m)" = "x86_64"')
+    )
+    $pod=@(
+        (New-StageTest 'podman-command' 'command -v podman')
+        (New-StageTest 'podman-version' 'podman --version')
+        (New-StageTest 'podman-info' 'podman info --format json')
+    )
+    $db=@(
+        (New-StageTest 'distrobox-command' 'command -v distrobox')
+        (New-StageTest 'distrobox-version' 'distrobox --version')
+        (New-StageTest 'distrobox-list' 'distrobox list')
+    )
+    $fp=@(
+        (New-StageTest 'flatpak-command' 'command -v flatpak')
+        (New-StageTest 'flatpak-version' 'flatpak --version')
+        (New-StageTest 'flatpak-remotes' 'flatpak remotes --columns=name')
+    )
+
+    # In Debian, podman requires crun
+    $p=New-DistroShelfPackageStage 'podman' 'apt' @('podman','crun') $pod 'container-runtime'
+
+    # Clean distrobox stage: on Debian 11/12 we can install via curl script natively if apt package isn't in main repos or if backports is absent
+    $d=New-StageContract 'distrobox' @('rootfs','podman') 'apt' @('curl -fsSL https://raw.githubusercontent.com/89luca89/distrobox/main/install | sh -s -- --prefix /usr/local') @('curl -fsSL https://raw.githubusercontent.com/89luca89/distrobox/main/install | sh -s -- --prefix /usr/local') $db @('curl -fsSL https://raw.githubusercontent.com/89luca89/distrobox/main/install | sh -s -- --prefix /usr/local') $db 'command' 'distrobox' 'dependency' 'container-runtime' 'distrobox'
+
+    $f=New-DistroShelfPackageStage 'flatpak' 'apt' @('flatpak') $fp 'desktop-runtime'
+    $terminalStages=@(
+        (New-DistroShelfTerminalStage 'terminal-gnome-console' 'apt' 'GNOME Console' 'gnome-console' 'kgx')
+        (New-DistroShelfTerminalStage 'terminal-kitty' 'apt' 'Kitty' 'kitty' 'kitty')
+        (New-DistroShelfTerminalStage 'terminal-alacritty' 'apt' 'Alacritty' 'alacritty' 'alacritty')
+        (New-DistroShelfTerminalStage 'terminal-foot' 'apt' 'Foot' 'foot' 'foot')
+        (New-DistroShelfTerminalStage 'terminal-konsole' 'apt' 'Konsole' 'konsole' 'konsole')
+    )
+    $fl=New-StageContract 'flathub' @('rootfs','flatpak') 'apt' @('mkdir -p /tmp/ds-flathub; curl -fsSL https://dl.flathub.org/repo/flathub.flatpakrepo -o /tmp/ds-flathub/flathub.flatpakrepo') @('flatpak remote-add --if-not-exists flathub /tmp/ds-flathub/flathub.flatpakrepo','flatpak remote-modify --collection-id=org.flathub.Stable flathub') @(New-StageTest 'flathub-remote' 'flatpak remotes --columns=name | grep -Fx flathub') @('flatpak remote-modify --collection-id=org.flathub.Stable flathub') @(New-StageTest 'flathub-remote' 'flatpak remotes --columns=name | grep -Fx flathub') 'wsl-path' '/tmp/ds-flathub' 'dependency' 'desktop-runtime' 'flatpak'
+    $ds=New-StageContract 'distroshelf' @('rootfs','distrobox','flatpak','flathub') 'apt' @('flatpak remote-modify --collection-id=org.flathub.Stable flathub','flatpak install -y flathub com.ranfdev.DistroShelf') @() @(New-StageTest 'distroshelf-install' 'flatpak info com.ranfdev.DistroShelf') @('flatpak remote-modify --collection-id=org.flathub.Stable flathub','flatpak install -y --sideload-repo=TRACK_SIDELOAD flathub com.ranfdev.DistroShelf') @(New-StageTest 'distroshelf-install' 'flatpak info com.ranfdev.DistroShelf') 'flatpak-sideload' 'com.ranfdev.DistroShelf' 'dependency' 'apps' 'flatpak'
+
+    [pscustomobject][ordered]@{SchemaVersion=4;Distro='Debian';Track='Debian0';PackageManager='apt';Rootfs=@{Name='Debian';Architecture='amd64'};Stages=@($root,$p,$d,$f,$fl,$ds)+$terminalStages;TrackFinalTests=@(
+        (New-StageTest 'podman-functional' 'podman run --rm quay.io/podman/hello')
+        (New-StageTest 'distrobox-final' 'distrobox list')
+        (New-StageTest 'flatpak-final' 'flatpak info com.ranfdev.DistroShelf')
+    );ProfileFinalTests=@(
+        (New-StageTest 'profile-os' 'test -s /etc/os-release')
+        (New-StageTest 'profile-architecture' 'test "$(uname -m)" = "x86_64"')
+    )}
 }
