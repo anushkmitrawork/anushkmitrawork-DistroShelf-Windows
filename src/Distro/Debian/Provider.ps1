@@ -29,11 +29,30 @@ function New-DistroShelfDebianProvider {
         (New-StageTest 'flatpak-remotes' 'flatpak remotes --columns=name')
     )
 
-    # In Debian, podman requires crun
-    $p=New-DistroShelfPackageStage 'podman' 'apt' @('podman','crun') $pod 'container-runtime'
+    # In Debian, podman requires crun and curl/wget for distrobox
+    $p=New-DistroShelfPackageStage 'podman' 'apt' @('podman','crun','curl','wget','ca-certificates') $pod 'container-runtime'
 
     # Clean distrobox stage: on Debian 11/12 we can install via curl script natively if apt package isn't in main repos or if backports is absent
-    $d=New-StageContract 'distrobox' @('rootfs','podman') 'apt' @('curl -fsSL https://raw.githubusercontent.com/89luca89/distrobox/main/install | sh -s -- --prefix /usr/local') @('curl -fsSL https://raw.githubusercontent.com/89luca89/distrobox/main/install | sh -s -- --prefix /usr/local') $db @('curl -fsSL https://raw.githubusercontent.com/89luca89/distrobox/main/install | sh -s -- --prefix /usr/local') $db 'command' 'distrobox' 'dependency' 'container-runtime' 'distrobox'
+    # We use the raw hashtable implementation matching New-StageContract properties Since New-StageContract is in a base module.
+    $d = [pscustomobject][ordered]@{
+        Id='distrobox'
+        Depends=@('rootfs','podman')
+        PackageManager='apt'
+        Kind='dependency'
+        ParallelGroup='container-runtime'
+        ExecutionModel='SharedBuilder'
+        Track=[pscustomobject][ordered]@{
+            Acquire=@('mkdir -p /tmp/ds-distrobox; curl -fsSL https://raw.githubusercontent.com/89luca89/distrobox/main/install -o /tmp/ds-distrobox/install')
+            Install=@('cat /tmp/ds-distrobox/install | sh -s -- --prefix /usr/local')
+            Tests=$db
+            ExportType='command'
+            ExportValue='distrobox'
+        }
+        Profile=[pscustomobject][ordered]@{
+            Install=@('cat /track-stage/distrobox/install | sh -s -- --prefix /usr/local')
+            Tests=$db
+        }
+    }
 
     $f=New-DistroShelfPackageStage 'flatpak' 'apt' @('flatpak') $fp 'desktop-runtime'
     $terminalStages=@(
@@ -43,8 +62,46 @@ function New-DistroShelfDebianProvider {
         (New-DistroShelfTerminalStage 'terminal-foot' 'apt' 'Foot' 'foot' 'foot')
         (New-DistroShelfTerminalStage 'terminal-konsole' 'apt' 'Konsole' 'konsole' 'konsole')
     )
-    $fl=New-StageContract 'flathub' @('rootfs','flatpak') 'apt' @('mkdir -p /tmp/ds-flathub; curl -fsSL https://dl.flathub.org/repo/flathub.flatpakrepo -o /tmp/ds-flathub/flathub.flatpakrepo') @('flatpak remote-add --if-not-exists flathub /tmp/ds-flathub/flathub.flatpakrepo','flatpak remote-modify --collection-id=org.flathub.Stable flathub') @(New-StageTest 'flathub-remote' 'flatpak remotes --columns=name | grep -Fx flathub') @('flatpak remote-modify --collection-id=org.flathub.Stable flathub') @(New-StageTest 'flathub-remote' 'flatpak remotes --columns=name | grep -Fx flathub') 'wsl-path' '/tmp/ds-flathub' 'dependency' 'desktop-runtime' 'flatpak'
-    $ds=New-StageContract 'distroshelf' @('rootfs','distrobox','flatpak','flathub') 'apt' @('flatpak remote-modify --collection-id=org.flathub.Stable flathub','flatpak install -y flathub com.ranfdev.DistroShelf') @() @(New-StageTest 'distroshelf-install' 'flatpak info com.ranfdev.DistroShelf') @('flatpak remote-modify --collection-id=org.flathub.Stable flathub','flatpak install -y --sideload-repo=TRACK_SIDELOAD flathub com.ranfdev.DistroShelf') @(New-StageTest 'distroshelf-install' 'flatpak info com.ranfdev.DistroShelf') 'flatpak-sideload' 'com.ranfdev.DistroShelf' 'dependency' 'apps' 'flatpak'
+    
+    $fl = [pscustomobject][ordered]@{
+        Id='flathub'
+        Depends=@('rootfs','flatpak')
+        PackageManager='apt'
+        Kind='dependency'
+        ParallelGroup='desktop-runtime'
+        ExecutionModel='SharedBuilder'
+        Track=[pscustomobject][ordered]@{
+            Acquire=@('mkdir -p /tmp/ds-flathub; curl -fsSL https://dl.flathub.org/repo/flathub.flatpakrepo -o /tmp/ds-flathub/flathub.flatpakrepo')
+            Install=@('flatpak remote-add --if-not-exists flathub /tmp/ds-flathub/flathub.flatpakrepo','flatpak remote-modify --collection-id=org.flathub.Stable flathub')
+            Tests=@(New-StageTest 'flathub-remote' 'flatpak remotes --columns=name | grep -Fx flathub')
+            ExportType='wsl-path'
+            ExportValue='/tmp/ds-flathub'
+        }
+        Profile=[pscustomobject][ordered]@{
+            Install=@('flatpak remote-modify --collection-id=org.flathub.Stable flathub')
+            Tests=@(New-StageTest 'flathub-remote' 'flatpak remotes --columns=name | grep -Fx flathub')
+        }
+    }
+
+    $ds = [pscustomobject][ordered]@{
+        Id='distroshelf'
+        Depends=@('rootfs','distrobox','flatpak','flathub')
+        PackageManager='apt'
+        Kind='dependency'
+        ParallelGroup='apps'
+        ExecutionModel='SharedBuilder'
+        Track=[pscustomobject][ordered]@{
+            Acquire=@('flatpak remote-modify --collection-id=org.flathub.Stable flathub','flatpak install -y flathub com.ranfdev.DistroShelf')
+            Install=@()
+            Tests=@(New-StageTest 'distroshelf-install' 'flatpak info com.ranfdev.DistroShelf')
+            ExportType='flatpak-sideload'
+            ExportValue='com.ranfdev.DistroShelf'
+        }
+        Profile=[pscustomobject][ordered]@{
+            Install=@('flatpak remote-modify --collection-id=org.flathub.Stable flathub','flatpak install -y --sideload-repo=TRACK_SIDELOAD flathub com.ranfdev.DistroShelf')
+            Tests=@(New-StageTest 'distroshelf-install' 'flatpak info com.ranfdev.DistroShelf')
+        }
+    }
 
     [pscustomobject][ordered]@{SchemaVersion=4;Distro='Debian';Track='Debian0';PackageManager='apt';Rootfs=@{Name='Debian';Architecture='amd64'};Stages=@($root,$p,$d,$f,$fl,$ds)+$terminalStages;TrackFinalTests=@(
         (New-StageTest 'podman-functional' 'podman run --rm quay.io/podman/hello')
