@@ -39,7 +39,7 @@ EOF',
         'apt-get update -o Acquire::Check-Valid-Until=false'
     )
 
-    $aptFix=New-StageContract 'apt-fix' @('rootfs') 'apt' $aptFixCmds @() @(New-StageTest 'apt-workable' 'apt-get update') @() @() 'wsl-path' '/etc/apt' 'dependency' 'rootfs' 'apt'
+    $aptFix=New-StageContract 'apt-fix' @('rootfs') 'apt' $aptFixCmds @() @(New-StageTest 'apt-workable' 'apt-get update') @() @(New-StageTest 'apt-workable' 'test -f /etc/apt/sources.list') 'wsl-path' '/etc/apt' 'dependency' 'rootfs' 'apt'
 
     $p=New-DistroShelfPackageStage 'podman' 'apt' @('podman','crun') $pod 'container-runtime';$p.Depends=@('apt-fix')
     $d=New-DistroShelfPackageStage 'distrobox' 'apt' @('distrobox') $db 'container-runtime';$d.Depends=@('apt-fix','podman')
